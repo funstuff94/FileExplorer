@@ -53,7 +53,10 @@ data class ExplorerUiState(
     val transferProgress: TransferProgress? = null,
     val needsVolumeAccess: Boolean = false,
     val volumeAccessName: String = "",
-    val volumeAccessPath: String = ""
+    val volumeAccessPath: String = "",
+    val isReadOnlyVolume: Boolean = false,
+    val readOnlyVolumeName: String = "",
+    val readOnlyVolumePath: String = ""
 ) {
     val selectedDirectories: List<FileItem>
         get() = filteredItems.filter { selectedItemPaths.contains(it.path) && it.isDirectory }
@@ -342,15 +345,27 @@ class FileExplorerViewModel(
                 }
             } else true
 
-            if (isExternalVolume && effectiveTreeUri == null && !isDirectlyReadable) {
-                val targetUuid = targetPath.trimEnd('/').substringAfterLast('/')
-                val matchingDrive = _uiState.value.drives.firstOrNull {
-                    it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
-                    (it.path == targetPath || targetPath.startsWith(it.path) ||
-                    it.path.contains(targetUuid) ||
-                    it.id.contains(targetUuid))
+            val isDirectlyWritable = if (isExternalVolume && effectiveTreeUri == null) {
+                try {
+                    val file = File(targetPath)
+                    file.canWrite()
+                } catch (_: Exception) {
+                    false
                 }
-                val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
+            } else true
+
+            val targetUuid = targetPath.trimEnd('/').substringAfterLast('/')
+            val matchingDrive = _uiState.value.drives.firstOrNull {
+                it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
+                (it.path == targetPath || targetPath.startsWith(it.path) ||
+                it.path.contains(targetUuid) ||
+                it.id.contains(targetUuid))
+            }
+            val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
+            val driveRootPath = matchingDrive?.path ?: targetPath
+            val isReadOnly = isExternalVolume && effectiveTreeUri == null && !isDirectlyWritable
+
+            if (isExternalVolume && effectiveTreeUri == null && !isDirectlyReadable) {
                 val breadcrumbs = listOf(Breadcrumb("This PC", ""), Breadcrumb(driveName, targetPath))
 
                 val updatedTabs = _uiState.value.tabs.map { tab ->
@@ -371,7 +386,10 @@ class FileExplorerViewModel(
                         isLoading = false,
                         needsVolumeAccess = true,
                         volumeAccessName = driveName,
-                        volumeAccessPath = targetPath,
+                        volumeAccessPath = driveRootPath,
+                        isReadOnlyVolume = false,
+                        readOnlyVolumeName = "",
+                        readOnlyVolumePath = "",
                         statusText = "Permission required to view $driveName"
                     )
                 }
@@ -406,7 +424,10 @@ class FileExplorerViewModel(
                     needsVolumeAccess = false,
                     volumeAccessName = "",
                     volumeAccessPath = "",
-                    statusText = generateStatusText(sorted, emptySet())
+                    isReadOnlyVolume = isReadOnly,
+                    readOnlyVolumeName = if (isReadOnly) driveName else "",
+                    readOnlyVolumePath = if (isReadOnly) driveRootPath else "",
+                    statusText = if (isReadOnly) "Read-only access. Grant permission to write files." else generateStatusText(sorted, emptySet())
                 )
             }
         }
@@ -439,7 +460,10 @@ class FileExplorerViewModel(
                     tabs = updatedTabs,
                     needsVolumeAccess = false,
                     volumeAccessPath = "",
-                    volumeAccessName = ""
+                    volumeAccessName = "",
+                    isReadOnlyVolume = false,
+                    readOnlyVolumeName = "",
+                    readOnlyVolumePath = ""
                 )
             }
             navigateTo(path, uriString, addToHistory = false)
@@ -612,7 +636,6 @@ class FileExplorerViewModel(
     fun paste(targetDirPath: String? = null, targetTreeUri: String? = null) {
         val clipboard = SharedClipboardManager.getClipboard() ?: _uiState.value.clipboardState ?: return
         val dest = targetDirPath ?: _uiState.value.currentPath
-        val destUri = targetTreeUri ?: _uiState.value.currentTreeUri
 
         transferJob?.cancel()
         isTransferCancelled = false
@@ -620,6 +643,33 @@ class FileExplorerViewModel(
         transferJob = viewModelScope.launch {
             val items = clipboard.items
             if (items.isEmpty()) return@launch
+
+            val isExternal = isExternalStoragePath(dest)
+            val effectiveDestUri = targetTreeUri ?: _uiState.value.currentTreeUri
+                ?: if (isExternal) repository.getPersistedTreeUriForPath(dest) else null
+
+            val isDirectlyWritable = if (isExternal && effectiveDestUri == null) {
+                try { File(dest).canWrite() } catch (_: Exception) { false }
+            } else true
+
+            if (isExternal && effectiveDestUri == null && !isDirectlyWritable) {
+                val targetUuid = dest.trimEnd('/').substringAfterLast('/')
+                val matchingDrive = _uiState.value.drives.firstOrNull {
+                    it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
+                    (it.path == dest || dest.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                }
+                val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
+                val driveRoot = matchingDrive?.path ?: dest
+                _uiState.update {
+                    it.copy(
+                        statusText = "Write permission required for $driveName. Please grant volume access.",
+                        needsVolumeAccess = true,
+                        volumeAccessName = driveName,
+                        volumeAccessPath = driveRoot
+                    )
+                }
+                return@launch
+            }
 
             val sourceDirs = items.mapNotNull { item ->
                 if (item.treeUri != null) item.treeUri else File(item.path).parent
@@ -690,9 +740,9 @@ class FileExplorerViewModel(
                 }
 
                 val ok = if (clipboard.operation == ClipboardOperation.CUT) {
-                    repository.moveItem(item.path, dest, item.treeUri, destUri, progressCallback, { isTransferCancelled })
+                    repository.moveItem(item.path, dest, item.treeUri, effectiveDestUri, progressCallback, { isTransferCancelled })
                 } else {
-                    repository.copyItem(item.path, dest, item.treeUri, destUri, progressCallback, { isTransferCancelled })
+                    repository.copyItem(item.path, dest, item.treeUri, effectiveDestUri, progressCallback, { isTransferCancelled })
                 }
 
                 if (ok) {
@@ -730,7 +780,7 @@ class FileExplorerViewModel(
             // Broadcast directory change events to notify ALL open windows/tabs to refresh
             sourceDirs.forEach { SharedClipboardManager.notifyDirectoryChanged(it) }
             SharedClipboardManager.notifyDirectoryChanged(dest)
-            if (destUri != null) SharedClipboardManager.notifyDirectoryChanged(destUri)
+            if (effectiveDestUri != null) SharedClipboardManager.notifyDirectoryChanged(effectiveDestUri)
 
             refresh()
         }
@@ -759,7 +809,31 @@ class FileExplorerViewModel(
         isTransferCancelled = false
 
         transferJob = viewModelScope.launch {
-            val destUri = targetTreeUri ?: if (isExternalStoragePath(dest)) repository.getPersistedTreeUriForPath(dest) else null
+            val isExternal = isExternalStoragePath(dest)
+            val destUri = targetTreeUri ?: if (isExternal) repository.getPersistedTreeUriForPath(dest) else null
+
+            val isDirectlyWritable = if (isExternal && destUri == null) {
+                try { File(dest).canWrite() } catch (_: Exception) { false }
+            } else true
+
+            if (isExternal && destUri == null && !isDirectlyWritable) {
+                val targetUuid = dest.trimEnd('/').substringAfterLast('/')
+                val matchingDrive = _uiState.value.drives.firstOrNull {
+                    it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
+                    (it.path == dest || dest.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                }
+                val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
+                val driveRoot = matchingDrive?.path ?: dest
+                _uiState.update {
+                    it.copy(
+                        statusText = "Write permission required for $driveName. Please grant volume access.",
+                        needsVolumeAccess = true,
+                        volumeAccessName = driveName,
+                        volumeAccessPath = driveRoot
+                    )
+                }
+                return@launch
+            }
             val sourceDirs = validItems.mapNotNull { item ->
                 if (item.treeUri != null) item.treeUri else File(item.path).parent
             }.distinct()
@@ -1018,24 +1092,86 @@ class FileExplorerViewModel(
     fun createDirectory(name: String, targetDirPath: String? = null, targetTreeUri: String? = null) {
         val current = _uiState.value
         val dir = targetDirPath ?: current.currentPath
-        val treeUri = targetTreeUri ?: current.currentTreeUri
+        val isExternal = isExternalStoragePath(dir)
+
         viewModelScope.launch {
-            repository.createDirectory(dir, name, treeUri)
-            SharedClipboardManager.notifyDirectoryChanged(dir)
-            if (treeUri != null) SharedClipboardManager.notifyDirectoryChanged(treeUri)
-            refresh()
+            val treeUri = targetTreeUri ?: current.currentTreeUri
+                ?: if (isExternal) repository.getPersistedTreeUriForPath(dir) else null
+
+            val isDirectlyWritable = if (isExternal && treeUri == null) {
+                try { File(dir).canWrite() } catch (_: Exception) { false }
+            } else true
+
+            if (isExternal && treeUri == null && !isDirectlyWritable) {
+                val targetUuid = dir.trimEnd('/').substringAfterLast('/')
+                val matchingDrive = current.drives.firstOrNull {
+                    it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
+                    (it.path == dir || dir.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                }
+                val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
+                val driveRoot = matchingDrive?.path ?: dir
+                _uiState.update {
+                    it.copy(
+                        statusText = "Write permission required for $driveName. Please grant volume access.",
+                        needsVolumeAccess = true,
+                        volumeAccessName = driveName,
+                        volumeAccessPath = driveRoot
+                    )
+                }
+                return@launch
+            }
+
+            val ok = repository.createDirectory(dir, name, treeUri)
+            if (ok) {
+                SharedClipboardManager.notifyDirectoryChanged(dir)
+                if (treeUri != null) SharedClipboardManager.notifyDirectoryChanged(treeUri)
+                refresh()
+            } else {
+                _uiState.update { it.copy(statusText = "Failed to create folder '$name'") }
+            }
         }
     }
 
     fun createTextFile(name: String, content: String = "", targetDirPath: String? = null, targetTreeUri: String? = null) {
         val current = _uiState.value
         val dir = targetDirPath ?: current.currentPath
-        val treeUri = targetTreeUri ?: current.currentTreeUri
+        val isExternal = isExternalStoragePath(dir)
+
         viewModelScope.launch {
-            repository.createTextFile(dir, name, content, treeUri)
-            SharedClipboardManager.notifyDirectoryChanged(dir)
-            if (treeUri != null) SharedClipboardManager.notifyDirectoryChanged(treeUri)
-            refresh()
+            val treeUri = targetTreeUri ?: current.currentTreeUri
+                ?: if (isExternal) repository.getPersistedTreeUriForPath(dir) else null
+
+            val isDirectlyWritable = if (isExternal && treeUri == null) {
+                try { File(dir).canWrite() } catch (_: Exception) { false }
+            } else true
+
+            if (isExternal && treeUri == null && !isDirectlyWritable) {
+                val targetUuid = dir.trimEnd('/').substringAfterLast('/')
+                val matchingDrive = current.drives.firstOrNull {
+                    it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
+                    (it.path == dir || dir.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                }
+                val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
+                val driveRoot = matchingDrive?.path ?: dir
+                _uiState.update {
+                    it.copy(
+                        statusText = "Write permission required for $driveName. Please grant volume access.",
+                        needsVolumeAccess = true,
+                        volumeAccessName = driveName,
+                        volumeAccessPath = driveRoot
+                    )
+                }
+                return@launch
+            }
+
+            val ok = repository.createTextFile(dir, name, content, treeUri)
+            if (ok) {
+                SharedClipboardManager.notifyDirectoryChanged(dir)
+                if (treeUri != null) SharedClipboardManager.notifyDirectoryChanged(treeUri)
+                refresh()
+            } else {
+                _uiState.update { it.copy(statusText = "Failed to create file '$name'") }
+            }
         }
     }
 

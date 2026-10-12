@@ -17,16 +17,26 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -168,7 +178,14 @@ fun FileExplorerApp(
                     context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 } catch (_: Exception) {}
             }
-            viewModel.attachVolumeUri(uiState.volumeAccessPath, uri.toString())
+            val uriStr = uri.toString()
+            val uuid = uri.lastPathSegment?.substringBefore(":") ?: ""
+            val targetPath = if (uiState.volumeAccessPath.isNotEmpty()) {
+                uiState.volumeAccessPath
+            } else if (uuid.isNotEmpty() && uuid != "primary") {
+                "/storage/$uuid"
+            } else ""
+            viewModel.attachVolumeUri(targetPath, uriStr)
         }
     }
 
@@ -432,6 +449,12 @@ fun FileExplorerApp(
                         onGrantAccess = { launchVolumeAccess(uiState.volumeAccessPath) }
                     )
                 } else {
+                    if (uiState.isReadOnlyVolume) {
+                        ReadOnlyDriveBanner(
+                            driveName = uiState.readOnlyVolumeName,
+                            onGrantAccess = { launchVolumeAccess(uiState.readOnlyVolumePath) }
+                        )
+                    }
                     val handleItemClick: (FileItem) -> Unit = { item ->
                         isEditingAddress = false
                         if (item.isShortcut && !item.shortcutTargetPath.isNullOrEmpty()) {
@@ -724,5 +747,57 @@ fun FileExplorerApp(
             progress = progress,
             onCancel = { viewModel.cancelTransfer() }
         )
+    }
+}
+
+@Composable
+private fun ReadOnlyDriveBanner(
+    driveName: String,
+    onGrantAccess: () -> Unit
+) {
+    Surface(
+        color = Color(0xFF28251C),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, Color(0xFFD89B00).copy(alpha = 0.5f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Read-only drive",
+                    tint = Color(0xFFFFB900),
+                    modifier = Modifier.padding(end = 10.dp)
+                )
+                Text(
+                    text = "$driveName is currently Read-Only. Grant write access to copy, move, delete, or create files.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Button(
+                onClick = onGrantAccess,
+                colors = ButtonDefaults.buttonColors(containerColor = Win11Blue),
+                shape = RoundedCornerShape(6.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text(
+                    text = "Grant Access",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White
+                )
+            }
+        }
     }
 }

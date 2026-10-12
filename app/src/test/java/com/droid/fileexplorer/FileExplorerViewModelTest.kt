@@ -713,5 +713,83 @@ class FileExplorerViewModelTest {
 
         assertTrue(viewModel.uiState.value.statusText.contains("does not exist"))
     }
+
+    @Test
+    fun testNavigateToExternalDrive_withoutPermission_requestsVolumeAccess() = runTest(testDispatcher) {
+        val usbPath = "/storage/C874-FBC6"
+        val usbDrive = DriveItem("usb1", "USB Drive (D:)", usbPath, 32_000_000_000L, 16_000_000_000L, DriveType.USB)
+        repository.drives.add(usbDrive)
+        repository.filesMap[usbPath] = mutableListOf(
+            FileItem("usb_file_1", "video.mp4", "$usbPath/video.mp4", isDirectory = false, size = 50_000_000L)
+        )
+
+        viewModel.navigateTo(usbPath)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(usbPath, state.currentPath)
+        assertTrue(state.needsVolumeAccess)
+        assertEquals("USB Drive (D:)", state.volumeAccessName)
+        assertEquals(usbPath, state.volumeAccessPath)
+    }
+
+    @Test
+    fun testPasteToExternalDrive_withoutWritePermission_requestsVolumeAccess() = runTest(testDispatcher) {
+        val usbPath = "/storage/C874-FBC6"
+        val usbDrive = DriveItem("usb1", "USB Drive (D:)", usbPath, 32_000_000_000L, 16_000_000_000L, DriveType.USB)
+        repository.drives.add(usbDrive)
+        repository.filesMap[usbPath] = mutableListOf()
+
+        // 1. Copy item from internal storage
+        advanceUntilIdle()
+        val notes = viewModel.uiState.value.items.first { it.name == "notes.txt" }
+        viewModel.copyItems(listOf(notes))
+        advanceUntilIdle()
+
+        // 2. Navigate to external USB drive
+        viewModel.navigateTo(usbPath)
+        advanceUntilIdle()
+
+        // 3. Attempt paste without granted tree URI
+        viewModel.paste()
+        advanceUntilIdle()
+
+        // 4. Should not fail silently; must request volume access
+        val state = viewModel.uiState.value
+        assertTrue(state.needsVolumeAccess)
+        assertEquals("USB Drive (D:)", state.volumeAccessName)
+        assertTrue(state.statusText.contains("Write permission required"))
+    }
+
+    @Test
+    fun testPasteToExternalDrive_withTreeUri_transfersSuccessfully() = runTest(testDispatcher) {
+        val usbPath = "/storage/C874-FBC6"
+        val treeUri = "content://com.android.externalstorage.documents/tree/C874-FBC6%3A"
+        val usbDrive = DriveItem("usb1", "USB Drive (D:)", usbPath, 32_000_000_000L, 16_000_000_000L, DriveType.USB, treeUri = treeUri)
+        repository.drives.add(usbDrive)
+        repository.filesMap[usbPath] = mutableListOf()
+        repository.saveVolumeTreeUri(usbPath, treeUri)
+
+        // 1. Copy item
+        advanceUntilIdle()
+        val notes = viewModel.uiState.value.items.first { it.name == "notes.txt" }
+        viewModel.copyItems(listOf(notes))
+        advanceUntilIdle()
+
+        // 2. Navigate to USB with treeUri
+        viewModel.navigateTo(usbPath, treeUri)
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.isReadOnlyVolume)
+
+        // 3. Paste
+        viewModel.paste()
+        advanceUntilIdle()
+
+        // 4. File should be copied to destination
+        val destFiles = repository.filesMap[usbPath]
+        assertNotNull(destFiles)
+        assertTrue(destFiles!!.any { it.name == "notes.txt" })
+    }
 }
 

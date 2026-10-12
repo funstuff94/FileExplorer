@@ -22,6 +22,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import android.webkit.MimeTypeMap
+import com.droid.fileexplorer.util.FileUriResolver
 
 class DefaultFileRepository(
     private val context: Context
@@ -82,6 +83,17 @@ class DefaultFileRepository(
         return if (lastSeg == "emulated" || lastSeg == "self" || lastSeg == "10" || lastSeg == "0" || lastSeg == "Apps" || lastSeg.contains(':')) null else lastSeg
     }
 
+    private fun isExternalStoragePath(path: String): Boolean {
+        val clean = path.trimEnd('/')
+        if (clean.isEmpty() || clean == "/storage" || clean.startsWith("/storage/emulated") || clean.startsWith("/storage/self") || clean.startsWith("/mnt/shared")) {
+            return false
+        }
+        return clean.startsWith("/mnt/media_rw") ||
+               clean.startsWith("/mnt/pass_through") ||
+               (clean.startsWith("/mnt/") && !clean.startsWith("/mnt/sdcard")) ||
+               clean.startsWith("/storage/")
+    }
+
     override suspend fun getPersistedTreeUriForPath(path: String): String? = withContext(Dispatchers.IO) {
         val cleanPath = path.trimEnd('/')
         // Internal storage (C:) and Linux shared paths must NEVER use an external tree URI!
@@ -97,16 +109,20 @@ class DefaultFileRepository(
         if (clean.startsWith("/storage/emulated") || clean.startsWith("/mnt/shared") || clean == "/storage" || clean == "/storage/self") {
             return@withContext
         }
-        val uuid = extractVolumeUuid(clean) ?: clean
+        val uuidFromPath = extractVolumeUuid(clean)
+        val uuidFromUri = extractVolumeUuid(treeUri)
+        val uuid = (uuidFromPath ?: uuidFromUri ?: clean).trim()
         if (uuid.isEmpty() || uuid == "10" || uuid == "0" || uuid == "emulated" || uuid == "Apps") {
             return@withContext
         }
-        prefs.edit()
-            .putString(PREF_VOLUME_URI_PREFIX + clean, treeUri)
+        val editor = prefs.edit()
             .putString(PREF_VOLUME_URI_PREFIX + uuid, treeUri)
             .putString(PREF_VOLUME_URI_PREFIX + "/storage/$uuid", treeUri)
             .putString(PREF_VOLUME_URI_PREFIX + "/mnt/media_rw/$uuid", treeUri)
-            .apply()
+        if (clean.isNotEmpty() && clean != uuid) {
+            editor.putString(PREF_VOLUME_URI_PREFIX + clean, treeUri)
+        }
+        editor.apply()
     }
 
     fun getPersistedTreeUriForVolume(uuid: String?, path: String): String? {
@@ -152,6 +168,9 @@ class DefaultFileRepository(
             return@withContext listDocumentFiles(path)
         }
 
+        val isExternal = isExternalStoragePath(path)
+        val effectiveTreeUri = treeUri ?: if (isExternal) getPersistedTreeUriForPath(path) else null
+
         // 1. Try direct filesystem listing first
         val directory = File(path)
         val directFiles = if (directory.exists() && directory.isDirectory) {
@@ -191,6 +210,7 @@ class DefaultFileRepository(
                     size = dirSize,
                     lastModified = file.lastModified(),
                     extension = if (isDir) "" else file.extension.lowercase(),
+                    treeUri = if (isExternal) effectiveTreeUri else null,
                     isPinned = isDir && pinnedSet.contains(cleanPath),
                     childCount = childCount,
                     isShortcut = isShortcut,
@@ -203,9 +223,6 @@ class DefaultFileRepository(
 
         // 2. If direct filesystem listing is blocked or not accessible (e.g. secondary external volume on Android 11+),
         // resolve via SAF DocumentFile for this path
-        val isExternal = !path.startsWith("/storage/emulated") && !path.startsWith("/mnt/shared") &&
-            (path.startsWith("/storage/") || path.startsWith("/mnt/media_rw/"))
-        val effectiveTreeUri = treeUri ?: if (isExternal) getPersistedTreeUriForPath(path) else null
         if (effectiveTreeUri != null) {
             val targetDoc = getDocumentFileForTarget(path, effectiveTreeUri)
             if (targetDoc != null && targetDoc.exists()) {
@@ -640,19 +657,33 @@ class DefaultFileRepository(
     }
 
     override suspend fun rename(path: String, newName: String, treeUri: String?): Boolean = withContext(Dispatchers.IO) {
-        val effectiveTreeUri = treeUri ?: if (path.startsWith("/storage/") && !path.startsWith("/storage/emulated")) {
+        val effectiveTreeUri = treeUri ?: if (isExternalStoragePath(path)) {
             getPersistedTreeUriForPath(path)
         } else null
 
         if (effectiveTreeUri != null || path.startsWith("content://")) {
             val doc = if (path.startsWith("content://")) {
                 DocumentFile.fromSingleUri(context, Uri.parse(path))
-            } else {
+            } else if (effectiveTreeUri != null) {
+                val uuid = extractVolumeUuid(path)
+                if (uuid != null) {
+                    try {
+                        val docId = FileUriResolver.buildDocumentId(uuid, path)
+                        val treeUriObj = Uri.parse(effectiveTreeUri)
+                        val treeId = DocumentsContract.getTreeDocumentId(treeUriObj)
+                        val rootTreeUri = DocumentsContract.buildTreeDocumentUri(treeUriObj.authority, treeId)
+                        val docUri = DocumentsContract.buildDocumentUriUsingTree(rootTreeUri, docId)
+                        val directDoc = DocumentFile.fromSingleUri(context, docUri) ?: DocumentFile.fromTreeUri(context, docUri)
+                        if (directDoc != null && directDoc.exists()) {
+                            return@withContext directDoc.renameTo(newName)
+                        }
+                    } catch (_: Exception) {}
+                }
                 val parentPath = path.substringBeforeLast('/')
                 val fileName = path.substringAfterLast('/')
                 val parentDoc = getDocumentFileForTarget(parentPath, effectiveTreeUri)
                 parentDoc?.findFile(fileName)
-            }
+            } else null
             if (doc != null) {
                 return@withContext doc.renameTo(newName)
             }
@@ -712,19 +743,38 @@ class DefaultFileRepository(
 
     override suspend fun calculateItemSize(path: String, treeUri: String?): Long = withContext(Dispatchers.IO) {
         try {
-            val isDoc = treeUri != null || path.startsWith("content://")
-            if (!isDoc) {
+            if (!path.startsWith("content://")) {
                 val file = File(path)
-                if (!file.exists()) return@withContext 0L
-                if (file.isFile) return@withContext file.length()
-                return@withContext calculateFolderSize(file, maxDepth = 100)
-            } else {
-                val uri = Uri.parse(treeUri ?: path)
-                val doc = DocumentFile.fromSingleUri(context, uri) ?: DocumentFile.fromTreeUri(context, uri)
-                    ?: return@withContext 0L
-                if (!doc.isDirectory) return@withContext doc.length()
-                return@withContext calculateDocFolderSize(doc, maxDepth = 100)
+                if (file.exists()) {
+                    return@withContext if (file.isFile) file.length() else calculateFolderSize(file, maxDepth = 100)
+                }
             }
+
+            val isContent = path.startsWith("content://")
+            val doc = if (isContent) {
+                val uri = Uri.parse(path)
+                DocumentFile.fromSingleUri(context, uri) ?: DocumentFile.fromTreeUri(context, uri)
+            } else {
+                val effectiveTree = treeUri ?: if (isExternalStoragePath(path)) getPersistedTreeUriForPath(path) else null
+                if (effectiveTree != null) {
+                    val uuid = extractVolumeUuid(path)
+                    if (uuid != null) {
+                        try {
+                            val docId = FileUriResolver.buildDocumentId(uuid, path)
+                            val treeUriObj = Uri.parse(effectiveTree)
+                            val treeId = DocumentsContract.getTreeDocumentId(treeUriObj)
+                            val rootTreeUri = DocumentsContract.buildTreeDocumentUri(treeUriObj.authority, treeId)
+                            val docUri = DocumentsContract.buildDocumentUriUsingTree(rootTreeUri, docId)
+                            DocumentFile.fromSingleUri(context, docUri) ?: DocumentFile.fromTreeUri(context, docUri)
+                        } catch (_: Exception) { null }
+                    } else null
+                } else null
+            }
+
+            if (doc != null && doc.exists()) {
+                return@withContext if (!doc.isDirectory) doc.length() else calculateDocFolderSize(doc, maxDepth = 100)
+            }
+            0L
         } catch (_: Exception) {
             0L
         }
@@ -781,9 +831,7 @@ class DefaultFileRepository(
 
         // Case 2: Filesystem path on an external volume
         val effectiveTreeUri = destTreeUri
-            ?: if (destDirPath.startsWith("/storage/") && !destDirPath.startsWith("/storage/emulated")) {
-                getPersistedTreeUriForVolume(null, destDirPath)
-            } else if (destDirPath.startsWith("/mnt/media_rw/")) {
+            ?: if (isExternalStoragePath(destDirPath)) {
                 getPersistedTreeUriForVolume(null, destDirPath)
             } else null
 
@@ -809,12 +857,28 @@ class DefaultFileRepository(
 
             if (relative.isEmpty()) return rootDoc
 
+            // 1. Try direct Document URI first (fastest and cleanest)
+            if (uuid != null) {
+                try {
+                    val docId = FileUriResolver.buildDocumentId(uuid, destDirPath)
+                    val treeId = DocumentsContract.getTreeDocumentId(rootUri)
+                    val rootTreeUri = DocumentsContract.buildTreeDocumentUri(rootUri.authority, treeId)
+                    val docUri = DocumentsContract.buildDocumentUriUsingTree(rootTreeUri, docId)
+                    val directDoc = DocumentFile.fromTreeUri(context, docUri)
+                    if (directDoc != null && directDoc.exists() && directDoc.isDirectory) {
+                        return directDoc
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // 2. Traversal fallback
             var currentDoc = rootDoc
             val segments = relative.split("/").filter { it.isNotEmpty() }
             for (seg in segments) {
-                val nextDoc = currentDoc.findFile(seg)?.takeIf { it.isDirectory }
-                    ?: currentDoc.createDirectory(seg)
-                    ?: return null
+                val existing = try {
+                    currentDoc.listFiles().firstOrNull { it.name.equals(seg, ignoreCase = true) && it.isDirectory }
+                } catch (_: Exception) { null }
+                val nextDoc = existing ?: currentDoc.createDirectory(seg) ?: return null
                 currentDoc = nextDoc
             }
             return currentDoc
@@ -878,27 +942,17 @@ class DefaultFileRepository(
         val targetUri = targetDoc.uri
         return try {
             srcFile.inputStream().use { input ->
-                val pfd = try {
-                    context.contentResolver.openFileDescriptor(targetUri, "wt")
-                } catch (_: Exception) { null }
-
-                val ok = if (pfd != null) {
-                    pfd.use { parcelFd ->
-                        FileOutputStream(parcelFd.fileDescriptor).use { outputStream ->
-                            copyStreamInternal(input, outputStream, parcelFd, fileName, currentCopiedRef, totalBytes, isCancelled, onProgress)
-                        }
+                context.contentResolver.openOutputStream(targetUri, "w")?.use { output ->
+                    val ok = copyStreamInternal(input, output, null, fileName, currentCopiedRef, totalBytes, isCancelled, onProgress)
+                    if (!ok) {
+                        try { targetDoc.delete() } catch (_: Exception) {}
+                        false
+                    } else {
+                        true
                     }
-                } else {
-                    context.contentResolver.openOutputStream(targetUri, "wt")?.use { outputStream ->
-                        copyStreamInternal(input, outputStream, null, fileName, currentCopiedRef, totalBytes, isCancelled, onProgress)
-                    } ?: false
-                }
-
-                if (!ok) {
+                } ?: run {
                     try { targetDoc.delete() } catch (_: Exception) {}
                     false
-                } else {
-                    true
                 }
             }
         } catch (e: Exception) {
@@ -946,22 +1000,34 @@ class DefaultFileRepository(
     ): Boolean {
         if (!destDir.exists()) destDir.mkdirs()
         val fileName = srcDoc.name ?: "file"
-        val destFile = File(destDir, fileName)
+        var destFile = File(destDir, fileName)
+        if (destFile.exists()) {
+            val base = destFile.nameWithoutExtension
+            val ext = if (destFile.extension.isNotEmpty()) ".${destFile.extension}" else ""
+            var count = 1
+            while (destFile.exists()) {
+                destFile = File(destDir, "$base - Copy ($count)$ext")
+                count++
+            }
+        }
 
-        try {
-            context.contentResolver.openInputStream(srcDoc.uri)?.use { input ->
+        return try {
+            val inStream = context.contentResolver.openInputStream(srcDoc.uri)
+                ?: return false
+            inStream.use { input ->
                 destFile.outputStream().use { out ->
                     val ok = copyStreamInternal(input, out, null, fileName, currentCopiedRef, totalBytes, isCancelled, onProgress)
                     if (!ok) {
                         try { destFile.delete() } catch (_: Exception) {}
-                        return false
+                        false
+                    } else {
+                        true
                     }
                 }
             }
-            return true
         } catch (e: Exception) {
             try { destFile.delete() } catch (_: Exception) {}
-            return false
+            false
         }
     }
 
@@ -1010,32 +1076,21 @@ class DefaultFileRepository(
             ?: return false
 
         return try {
-            context.contentResolver.openInputStream(srcDoc.uri)?.use { input ->
-                val pfd = try {
-                    context.contentResolver.openFileDescriptor(targetDoc.uri, "wt")
-                } catch (_: Exception) { null }
-
-                val ok = if (pfd != null) {
-                    pfd.use { parcelFd ->
-                        FileOutputStream(parcelFd.fileDescriptor).use { output ->
-                            copyStreamInternal(input, output, parcelFd, fileName, currentCopiedRef, totalBytes, isCancelled, onProgress)
-                        }
+            val inStream = context.contentResolver.openInputStream(srcDoc.uri)
+                ?: return false
+            inStream.use { input ->
+                context.contentResolver.openOutputStream(targetDoc.uri, "w")?.use { output ->
+                    val ok = copyStreamInternal(input, output, null, fileName, currentCopiedRef, totalBytes, isCancelled, onProgress)
+                    if (!ok) {
+                        try { targetDoc.delete() } catch (_: Exception) {}
+                        false
+                    } else {
+                        true
                     }
-                } else {
-                    context.contentResolver.openOutputStream(targetDoc.uri, "wt")?.use { output ->
-                        copyStreamInternal(input, output, null, fileName, currentCopiedRef, totalBytes, isCancelled, onProgress)
-                    } ?: false
-                }
-
-                if (!ok) {
+                } ?: run {
                     try { targetDoc.delete() } catch (_: Exception) {}
                     false
-                } else {
-                    true
                 }
-            } ?: run {
-                try { targetDoc.delete() } catch (_: Exception) {}
-                false
             }
         } catch (e: Exception) {
             try { targetDoc.delete() } catch (_: Exception) {}
@@ -1148,13 +1203,51 @@ class DefaultFileRepository(
             val totalBytes = calculateItemSize(sourcePath, sourceTreeUri)
             val currentCopiedRef = LongArray(1) { 0L }
 
-            val isSrcDoc = sourceTreeUri != null || sourcePath.startsWith("content://")
-            val targetDoc = getDocumentFileForTarget(destDirPath, destTreeUri)
+            val effectiveDestTree = destTreeUri
+                ?: if (isExternalStoragePath(destDirPath)) getPersistedTreeUriForPath(destDirPath) else null
+            val targetDoc = getDocumentFileForTarget(destDirPath, effectiveDestTree)
 
-            if (isSrcDoc) {
-                val srcUri = Uri.parse(sourceTreeUri ?: sourcePath)
-                val srcDoc = DocumentFile.fromSingleUri(context, srcUri) ?: DocumentFile.fromTreeUri(context, srcUri)
-                    ?: return@withContext false
+            val isSrcContentUri = sourcePath.startsWith("content://")
+            val srcFile = if (!isSrcContentUri) File(sourcePath) else null
+
+            if (srcFile != null && srcFile.exists()) {
+                if (targetDoc != null) {
+                    if (srcFile.isDirectory) {
+                        return@withContext copyDirectoryToDoc(srcFile, targetDoc, currentCopiedRef, totalBytes, isCancelled, onProgress)
+                    } else {
+                        return@withContext copyFileToDoc(srcFile, targetDoc, currentCopiedRef, totalBytes, isCancelled, onProgress)
+                    }
+                } else {
+                    val destDir = File(destDirPath)
+                    if (!destDir.exists()) destDir.mkdirs()
+                    if (srcFile.isDirectory) {
+                        return@withContext copyDirectoryToDirectory(srcFile, destDir, currentCopiedRef, totalBytes, isCancelled, onProgress)
+                    } else {
+                        return@withContext copyFileToFile(srcFile, destDir, currentCopiedRef, totalBytes, isCancelled, onProgress)
+                    }
+                }
+            } else {
+                val effectiveSrcTree = sourceTreeUri
+                    ?: if (isExternalStoragePath(sourcePath)) getPersistedTreeUriForPath(sourcePath) else null
+
+                val srcDoc = if (isSrcContentUri) {
+                    val uri = Uri.parse(sourcePath)
+                    DocumentFile.fromSingleUri(context, uri) ?: DocumentFile.fromTreeUri(context, uri)
+                } else if (effectiveSrcTree != null) {
+                    val uuid = extractVolumeUuid(sourcePath)
+                    if (uuid != null) {
+                        try {
+                            val docId = FileUriResolver.buildDocumentId(uuid, sourcePath)
+                            val treeUriObj = Uri.parse(effectiveSrcTree)
+                            val treeId = DocumentsContract.getTreeDocumentId(treeUriObj)
+                            val rootTreeUri = DocumentsContract.buildTreeDocumentUri(treeUriObj.authority, treeId)
+                            val docUri = DocumentsContract.buildDocumentUriUsingTree(rootTreeUri, docId)
+                            DocumentFile.fromSingleUri(context, docUri) ?: DocumentFile.fromTreeUri(context, docUri)
+                        } catch (_: Exception) { null }
+                    } else null
+                } else null
+
+                if (srcDoc == null || !srcDoc.exists()) return@withContext false
 
                 if (targetDoc != null) {
                     if (srcDoc.isDirectory) {
@@ -1169,25 +1262,6 @@ class DefaultFileRepository(
                         return@withContext copyDocToDirectory(srcDoc, destDir, currentCopiedRef, totalBytes, isCancelled, onProgress)
                     } else {
                         return@withContext copyDocToFile(srcDoc, destDir, currentCopiedRef, totalBytes, isCancelled, onProgress)
-                    }
-                }
-            } else {
-                val srcFile = File(sourcePath)
-                if (!srcFile.exists()) return@withContext false
-
-                if (targetDoc != null) {
-                    if (srcFile.isDirectory) {
-                        return@withContext copyDirectoryToDoc(srcFile, targetDoc, currentCopiedRef, totalBytes, isCancelled, onProgress)
-                    } else {
-                        return@withContext copyFileToDoc(srcFile, targetDoc, currentCopiedRef, totalBytes, isCancelled, onProgress)
-                    }
-                } else {
-                    val destDir = File(destDirPath)
-                    if (!destDir.exists()) destDir.mkdirs()
-                    if (srcFile.isDirectory) {
-                        return@withContext copyDirectoryToDirectory(srcFile, destDir, currentCopiedRef, totalBytes, isCancelled, onProgress)
-                    } else {
-                        return@withContext copyFileToFile(srcFile, destDir, currentCopiedRef, totalBytes, isCancelled, onProgress)
                     }
                 }
             }
@@ -1205,9 +1279,8 @@ class DefaultFileRepository(
         isCancelled: (() -> Boolean)?
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            val isSrcDoc = sourceTreeUri != null || sourcePath.startsWith("content://")
-            val isDestDoc = destTreeUri != null || destDirPath.startsWith("content://") ||
-                (destDirPath.startsWith("/storage/") && !destDirPath.startsWith("/storage/emulated"))
+            val isSrcDoc = sourceTreeUri != null || sourcePath.startsWith("content://") || isExternalStoragePath(sourcePath)
+            val isDestDoc = destTreeUri != null || destDirPath.startsWith("content://") || isExternalStoragePath(destDirPath)
 
             if (!isSrcDoc && !isDestDoc) {
                 val src = File(sourcePath)
@@ -1297,11 +1370,26 @@ class DefaultFileRepository(
         if (file.exists() && file.isDirectory && file.deleteRecursively()) {
             return@withContext true
         }
-        val effectiveTreeUri = treeUri ?: if (path.startsWith("/storage/") && !path.startsWith("/storage/emulated")) {
-            getPersistedTreeUriForVolume(null, path)
+        val effectiveTreeUri = treeUri ?: if (isExternalStoragePath(path)) {
+            getPersistedTreeUriForPath(path)
         } else null
 
         if (effectiveTreeUri != null) {
+            val uuid = extractVolumeUuid(path)
+            if (uuid != null) {
+                try {
+                    val docId = FileUriResolver.buildDocumentId(uuid, path)
+                    val treeUriObj = Uri.parse(effectiveTreeUri)
+                    val treeId = DocumentsContract.getTreeDocumentId(treeUriObj)
+                    val rootTreeUri = DocumentsContract.buildTreeDocumentUri(treeUriObj.authority, treeId)
+                    val docUri = DocumentsContract.buildDocumentUriUsingTree(rootTreeUri, docId)
+                    val doc = DocumentFile.fromSingleUri(context, docUri) ?: DocumentFile.fromTreeUri(context, docUri)
+                    if (doc != null && doc.exists() && doc.delete()) {
+                        return@withContext true
+                    }
+                } catch (_: Exception) {}
+            }
+
             val parentPath = path.substringBeforeLast('/')
             val fileName = path.substringAfterLast('/')
             val parentDoc = getDocumentFileForTarget(parentPath, effectiveTreeUri)
