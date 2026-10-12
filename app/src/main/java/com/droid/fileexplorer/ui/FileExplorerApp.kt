@@ -122,6 +122,7 @@ fun FileExplorerApp(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.onPermissionResult(checkPermission())
+                viewModel.refreshDrives()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -152,6 +153,8 @@ fun FileExplorerApp(
                     if (uuid.isNotEmpty() && uuid != "primary") {
                         viewModel.attachVolumeUri("/storage/$uuid", uri.toString())
                     }
+                } else if (uri.authority == "com.android.mtp.documents") {
+                    viewModel.attachVolumeUri(uri.toString(), uri.toString())
                 }
 
                 viewModel.addCloudDrive(cleanName, uri.toString())
@@ -164,7 +167,7 @@ fun FileExplorerApp(
         }
     }
 
-    // Storage Access Framework Launcher for External Hard Drives / USB Drives
+    // Storage Access Framework Launcher for External Hard Drives / USB Drives / Smartphones
     val volumeAccessLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -179,9 +182,12 @@ fun FileExplorerApp(
                 } catch (_: Exception) {}
             }
             val uriStr = uri.toString()
+            val isMtp = uri.authority == "com.android.mtp.documents" || uiState.volumeAccessPath.startsWith("mtp")
             val uuid = uri.lastPathSegment?.substringBefore(":") ?: ""
             val targetPath = if (uiState.volumeAccessPath.isNotEmpty()) {
                 uiState.volumeAccessPath
+            } else if (isMtp) {
+                uriStr
             } else if (uuid.isNotEmpty() && uuid != "primary") {
                 "/storage/$uuid"
             } else ""
@@ -190,8 +196,9 @@ fun FileExplorerApp(
     }
 
     fun launchVolumeAccess(path: String) {
+        val isMtp = path.startsWith("mtp") || path.contains("com.android.mtp.documents")
         val storageManager = context.getSystemService(Context.STORAGE_SERVICE) as? StorageManager
-        val volume = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && storageManager != null) {
+        val volume = if (!isMtp && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && storageManager != null) {
             storageManager.storageVolumes.find { vol ->
                 val dir = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) vol.directory else null
                 dir?.absolutePath == path || (vol.uuid != null && path.contains(vol.uuid!!))
@@ -199,7 +206,7 @@ fun FileExplorerApp(
         } else null
 
         var intent: Intent? = null
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && volume != null) {
+        if (!isMtp && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && volume != null) {
             try {
                 intent = volume.createOpenDocumentTreeIntent()
             } catch (_: Exception) {}
@@ -213,10 +220,21 @@ fun FileExplorerApp(
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
                 )
-                val uuid = volume?.uuid ?: path.trimEnd('/').substringAfterLast('/')
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && uuid.isNotEmpty()) {
-                    val rootUri = DocumentsContract.buildRootUri("com.android.externalstorage.documents", uuid)
-                    putExtra(DocumentsContract.EXTRA_INITIAL_URI, rootUri)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    if (isMtp) {
+                        try {
+                            val rootsUri = DocumentsContract.buildRootsUri("com.android.mtp.documents")
+                            putExtra(DocumentsContract.EXTRA_INITIAL_URI, rootsUri)
+                        } catch (_: Exception) {}
+                    } else {
+                        val uuid = volume?.uuid ?: path.trimEnd('/').substringAfterLast('/')
+                        if (uuid.isNotEmpty()) {
+                            try {
+                                val rootUri = DocumentsContract.buildRootUri("com.android.externalstorage.documents", uuid)
+                                putExtra(DocumentsContract.EXTRA_INITIAL_URI, rootUri)
+                            } catch (_: Exception) {}
+                        }
+                    }
                 }
             }
         }

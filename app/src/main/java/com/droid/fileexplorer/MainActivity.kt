@@ -1,6 +1,10 @@
 package com.droid.fileexplorer
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -25,6 +29,12 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_INITIAL_PATH = "EXTRA_INITIAL_PATH"
         const val EXTRA_INITIAL_TREE_URI = "EXTRA_INITIAL_TREE_URI"
+    }
+
+    private val deviceChangeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            viewModel.refreshDrives()
+        }
     }
 
     private val viewModel: FileExplorerViewModel by viewModels {
@@ -53,6 +63,45 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        val usbFilter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        val mediaFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_MEDIA_MOUNTED)
+            addAction(Intent.ACTION_MEDIA_UNMOUNTED)
+            addAction(Intent.ACTION_MEDIA_REMOVED)
+            addAction(Intent.ACTION_MEDIA_EJECT)
+            addAction(Intent.ACTION_MEDIA_BAD_REMOVAL)
+            addDataScheme("file")
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(deviceChangeReceiver, usbFilter, Context.RECEIVER_EXPORTED)
+                registerReceiver(deviceChangeReceiver, mediaFilter, Context.RECEIVER_EXPORTED)
+            } else {
+                registerReceiver(deviceChangeReceiver, usbFilter)
+                registerReceiver(deviceChangeReceiver, mediaFilter)
+            }
+        } catch (_: Exception) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    registerReceiver(deviceChangeReceiver, usbFilter, Context.RECEIVER_NOT_EXPORTED)
+                    registerReceiver(deviceChangeReceiver, mediaFilter, Context.RECEIVER_NOT_EXPORTED)
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        try {
+            unregisterReceiver(deviceChangeReceiver)
+        } catch (_: Exception) {}
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -74,6 +123,7 @@ class MainActivity : ComponentActivity() {
             true
         }
         viewModel.onPermissionResult(hasPermission)
+        viewModel.refreshDrives()
     }
 
     private fun requestStorageAccessIfNeeded() {

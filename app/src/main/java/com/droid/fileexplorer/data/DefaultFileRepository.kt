@@ -198,7 +198,7 @@ class DefaultFileRepository(
             return@withContext directFiles.map { file ->
                 val isDir = file.isDirectory
                 val childCount = if (isDir) file.listFiles()?.size ?: 0 else 0
-                val dirSize = if (isDir) calculateFolderSize(file, maxDepth = 3) else file.length()
+                val dirSize = if (isDir) 0L else file.length()
                 val cleanPath = file.absolutePath.trimEnd('/')
 
                 var isShortcut = false
@@ -251,7 +251,7 @@ class DefaultFileRepository(
                     val cleanPath = "${path.trimEnd('/')}/$name"
                     val docChildren = if (isDir) try { doc.listFiles() } catch (_: Exception) { null } else null
                     val childCount = docChildren?.size ?: 0
-                    val docSize = if (isDir) calculateDocFolderSize(doc, maxDepth = 2) else doc.length()
+                    val docSize = if (isDir) 0L else doc.length()
 
                     var isShortcut = false
                     var shortcutTargetPath: String? = null
@@ -342,7 +342,7 @@ class DefaultFileRepository(
             }
             val docChildren = if (isDir) try { doc.listFiles() } catch (_: Exception) { null } else null
             val childCount = docChildren?.size ?: 0
-            val docSize = if (isDir) calculateDocFolderSize(doc, maxDepth = 2) else doc.length()
+            val docSize = if (isDir) 0L else doc.length()
 
             var isShortcut = false
             var shortcutTargetPath: String? = null
@@ -562,71 +562,8 @@ class DefaultFileRepository(
     ): Char {
         var currentLetter = startDriveLetter
 
-        // A. Check Android ContentResolver's persistedUriPermissions for MTP smartphones
-        try {
-            val perms = context.contentResolver.persistedUriPermissions
-            for (perm in perms) {
-                if (!perm.isReadPermission) continue
-                val uriStr = perm.uri.toString()
-                if (uriStr.contains("com.android.mtp.documents")) {
-                    val rootDoc = try { DocumentFile.fromTreeUri(context, perm.uri) } catch (_: Exception) { null }
-                    val phoneTitle = rootDoc?.name?.takeIf { it.isNotBlank() } ?: "Android Smartphone"
-                    if (!addedPaths.contains(uriStr)) {
-                        addedPaths.add(uriStr)
-                        val letter = currentLetter++
-                        drives.add(
-                            DriveItem(
-                                id = "mtp_perm_${uriStr.hashCode()}",
-                                name = "$phoneTitle ($letter:)",
-                                path = uriStr,
-                                totalBytes = 0L,
-                                freeBytes = 0L,
-                                type = DriveType.SMARTPHONE,
-                                treeUri = uriStr
-                            )
-                        )
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
-        // B. Query com.android.mtp.documents roots if accessible
-        try {
-            val rootsUri = DocumentsContract.buildRootsUri("com.android.mtp.documents")
-            context.contentResolver.query(rootsUri, null, null, null, null)?.use { cursor ->
-                val titleCol = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_TITLE)
-                val docIdCol = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_DOCUMENT_ID)
-                val availCol = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES)
-                val capCol = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_CAPACITY_BYTES)
-                while (cursor.moveToNext()) {
-                    val title = if (titleCol != -1) cursor.getString(titleCol) else "Android Smartphone"
-                    val docId = if (docIdCol != -1) cursor.getString(docIdCol) else null
-                    val avail = if (availCol != -1) cursor.getLong(availCol) else 0L
-                    val cap = if (capCol != -1) cursor.getLong(capCol) else 0L
-                    val treeUri = if (docId != null) {
-                        DocumentsContract.buildTreeDocumentUri("com.android.mtp.documents", docId).toString()
-                    } else null
-                    val path = treeUri ?: "mtp://phone"
-                    if (!addedPaths.contains(path)) {
-                        addedPaths.add(path)
-                        val letter = currentLetter++
-                        drives.add(
-                            DriveItem(
-                                id = "mtp_root_${docId ?: title}",
-                                name = "$title ($letter:)",
-                                path = path,
-                                totalBytes = cap,
-                                freeBytes = avail,
-                                type = DriveType.SMARTPHONE,
-                                treeUri = treeUri
-                            )
-                        )
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
-        // C. Check UsbManager for physically attached USB smartphones (Pixel, Galaxy, Xiaomi, OnePlus, MTP devices)
+        // 1. Scan UsbManager first for physically connected smartphones (Google Pixel, Samsung Galaxy, etc.)
+        val connectedPhones = mutableListOf<Triple<String, String, Int>>() // phonePath, prettyName, deviceId
         try {
             val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
             if (usbManager != null) {
@@ -665,39 +602,122 @@ class DefaultFileRepository(
                         phoneKeywords.any { prod.contains(it) || manu.contains(it) }
 
                     if (isPhone) {
-                        val phonePath = "mtp://${device.deviceId}"
                         val prettyName = when {
                             !device.productName.isNullOrBlank() -> device.productName!!
                             !device.manufacturerName.isNullOrBlank() -> "${device.manufacturerName} Smartphone"
                             else -> "Android Smartphone"
                         }
-
-                        val alreadyAdded = drives.any {
-                            it.type == DriveType.SMARTPHONE &&
-                            (it.name.contains(prettyName, ignoreCase = true) || it.path == phonePath)
-                        }
-
-                        if (!alreadyAdded) {
-                            val savedTreeUri = getPersistedTreeUriForVolume("phone_${device.deviceId}", phonePath)
-                                ?: getPersistedTreeUriForVolume(null, "mtp")
-                            val letter = currentLetter++
-                            addedPaths.add(phonePath)
-                            drives.add(
-                                DriveItem(
-                                    id = "phone_${device.deviceId}",
-                                    name = "$prettyName ($letter:)",
-                                    path = savedTreeUri ?: phonePath,
-                                    totalBytes = 0L,
-                                    freeBytes = 0L,
-                                    type = DriveType.SMARTPHONE,
-                                    treeUri = savedTreeUri
-                                )
-                            )
-                        }
+                        connectedPhones.add(Triple("mtp://${device.deviceId}", prettyName, device.deviceId))
                     }
                 }
             }
         } catch (_: Exception) {}
+
+        val primaryPhoneName = connectedPhones.firstOrNull()?.second
+
+        // 2. Check Android ContentResolver's persistedUriPermissions for MTP smartphones
+        try {
+            val perms = context.contentResolver.persistedUriPermissions
+            for (perm in perms) {
+                if (!perm.isReadPermission) continue
+                val uriStr = perm.uri.toString()
+                if (uriStr.contains("com.android.mtp.documents")) {
+                    val rootDoc = try { DocumentFile.fromTreeUri(context, perm.uri) } catch (_: Exception) { null }
+                    val rawTitle = rootDoc?.name?.takeIf { it.isNotBlank() } ?: "Android Smartphone"
+                    val phoneTitle = if (primaryPhoneName != null && (rawTitle == "Android Smartphone" || rawTitle.contains("Internal", ignoreCase = true) || rawTitle.contains("storage", ignoreCase = true))) {
+                        "$primaryPhoneName ($rawTitle)"
+                    } else if (primaryPhoneName != null && !rawTitle.contains(primaryPhoneName, ignoreCase = true)) {
+                        "$primaryPhoneName - $rawTitle"
+                    } else {
+                        rawTitle
+                    }
+
+                    if (!addedPaths.contains(uriStr)) {
+                        addedPaths.add(uriStr)
+                        val letter = currentLetter++
+                        drives.add(
+                            DriveItem(
+                                id = "mtp_perm_${uriStr.hashCode()}",
+                                name = "$phoneTitle ($letter:)",
+                                path = uriStr,
+                                totalBytes = 0L,
+                                freeBytes = 0L,
+                                type = DriveType.SMARTPHONE,
+                                treeUri = uriStr
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 3. Query com.android.mtp.documents roots if accessible
+        try {
+            val rootsUri = DocumentsContract.buildRootsUri("com.android.mtp.documents")
+            context.contentResolver.query(rootsUri, null, null, null, null)?.use { cursor ->
+                val titleCol = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_TITLE)
+                val docIdCol = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_DOCUMENT_ID)
+                val availCol = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES)
+                val capCol = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_CAPACITY_BYTES)
+                while (cursor.moveToNext()) {
+                    val rawTitle = if (titleCol != -1) cursor.getString(titleCol) else "Android Smartphone"
+                    val title = if (primaryPhoneName != null && !rawTitle.contains(primaryPhoneName, ignoreCase = true)) {
+                        "$primaryPhoneName - $rawTitle"
+                    } else rawTitle
+                    val docId = if (docIdCol != -1) cursor.getString(docIdCol) else null
+                    val avail = if (availCol != -1) cursor.getLong(availCol) else 0L
+                    val cap = if (capCol != -1) cursor.getLong(capCol) else 0L
+                    val treeUri = if (docId != null) {
+                        DocumentsContract.buildTreeDocumentUri("com.android.mtp.documents", docId).toString()
+                    } else null
+                    val path = treeUri ?: "mtp://phone"
+
+                    val existing = drives.firstOrNull { it.type == DriveType.SMARTPHONE && (it.path == path || (treeUri != null && it.treeUri == treeUri)) }
+                    if (existing != null) {
+                        if (cap > 0L) {
+                            val idx = drives.indexOf(existing)
+                            drives[idx] = existing.copy(totalBytes = cap, freeBytes = avail)
+                        }
+                    } else if (!addedPaths.contains(path)) {
+                        addedPaths.add(path)
+                        val letter = currentLetter++
+                        drives.add(
+                            DriveItem(
+                                id = "mtp_root_${docId ?: title}",
+                                name = "$title ($letter:)",
+                                path = path,
+                                totalBytes = cap,
+                                freeBytes = avail,
+                                type = DriveType.SMARTPHONE,
+                                treeUri = treeUri
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 4. If no MTP drive with granted permissions exists yet, add connected phone from UsbManager
+        for ((phonePath, prettyName, deviceId) in connectedPhones) {
+            val alreadyAdded = drives.any { it.type == DriveType.SMARTPHONE }
+            if (!alreadyAdded && !addedPaths.contains(phonePath)) {
+                val savedTreeUri = getPersistedTreeUriForVolume("phone_$deviceId", phonePath)
+                    ?: getPersistedTreeUriForVolume(null, "mtp")
+                val letter = currentLetter++
+                addedPaths.add(phonePath)
+                drives.add(
+                    DriveItem(
+                        id = "phone_$deviceId",
+                        name = "$prettyName ($letter:)",
+                        path = savedTreeUri ?: phonePath,
+                        totalBytes = 0L,
+                        freeBytes = 0L,
+                        type = DriveType.SMARTPHONE,
+                        treeUri = savedTreeUri
+                    )
+                )
+            }
+        }
 
         return currentLetter
     }
@@ -787,7 +807,7 @@ class DefaultFileRepository(
         } else null
 
         if (effectiveTreeUri != null || parentPath.startsWith("content://")) {
-            val parentDoc = getDocumentFileForTarget(parentPath, effectiveTreeUri)
+            val parentDoc = getDocumentFileForTarget(parentPath, effectiveTreeUri, createIfMissing = true)
             if (parentDoc != null) {
                 return@withContext parentDoc.createDirectory(name) != null
             }
@@ -802,7 +822,7 @@ class DefaultFileRepository(
         } else null
 
         if (effectiveTreeUri != null || parentPath.startsWith("content://")) {
-            val parentDoc = getDocumentFileForTarget(parentPath, effectiveTreeUri)
+            val parentDoc = getDocumentFileForTarget(parentPath, effectiveTreeUri, createIfMissing = true)
             if (parentDoc != null) {
                 val fileDoc = parentDoc.createFile("text/plain", name) ?: return@withContext false
                 return@withContext try {
@@ -975,7 +995,7 @@ class DefaultFileRepository(
         }
     }
 
-    private fun getDocumentFileForTarget(destDirPath: String, destTreeUri: String?): DocumentFile? {
+    private fun getDocumentFileForTarget(destDirPath: String, destTreeUri: String?, createIfMissing: Boolean = false): DocumentFile? {
         // Case 1: If destDirPath is already a content:// URI
         if (destDirPath.startsWith("content://")) {
             val uri = Uri.parse(destDirPath)
@@ -997,7 +1017,7 @@ class DefaultFileRepository(
             }
         }
 
-        // Case 2: Filesystem path on an external volume
+        // Case 2: Filesystem path or mtp:// path on an external volume
         val effectiveTreeUri = destTreeUri
             ?: if (isExternalStoragePath(destDirPath)) {
                 getPersistedTreeUriForVolume(null, destDirPath)
@@ -1011,6 +1031,14 @@ class DefaultFileRepository(
 
             val uuid = extractVolumeUuid(destDirPath)
             val relative = when {
+                destDirPath.startsWith("mtp://") -> {
+                    val after = destDirPath.removePrefix("mtp://").trim('/')
+                    if (after.contains('/')) {
+                        after.substringAfter('/').trim('/')
+                    } else {
+                        ""
+                    }
+                }
                 uuid != null && destDirPath.startsWith("/storage/$uuid") -> {
                     destDirPath.removePrefix("/storage/$uuid").trim('/')
                 }
@@ -1026,7 +1054,7 @@ class DefaultFileRepository(
             if (relative.isEmpty()) return rootDoc
 
             // 1. Try direct Document URI first (fastest and cleanest)
-            if (uuid != null) {
+            if (uuid != null && !destDirPath.startsWith("mtp://")) {
                 try {
                     val docId = FileUriResolver.buildDocumentId(uuid, destDirPath)
                     val treeId = DocumentsContract.getTreeDocumentId(rootUri)
@@ -1046,7 +1074,7 @@ class DefaultFileRepository(
                 val existing = try {
                     currentDoc.listFiles().firstOrNull { it.name.equals(seg, ignoreCase = true) && it.isDirectory }
                 } catch (_: Exception) { null }
-                val nextDoc = existing ?: currentDoc.createDirectory(seg) ?: return null
+                val nextDoc = existing ?: (if (createIfMissing) currentDoc.createDirectory(seg) else null) ?: return null
                 currentDoc = nextDoc
             }
             return currentDoc
@@ -1373,7 +1401,7 @@ class DefaultFileRepository(
 
             val effectiveDestTree = destTreeUri
                 ?: if (isExternalStoragePath(destDirPath)) getPersistedTreeUriForPath(destDirPath) else null
-            val targetDoc = getDocumentFileForTarget(destDirPath, effectiveDestTree)
+            val targetDoc = getDocumentFileForTarget(destDirPath, effectiveDestTree, createIfMissing = true)
 
             val isSrcContentUri = sourcePath.startsWith("content://")
             val srcFile = if (!isSrcContentUri) File(sourcePath) else null

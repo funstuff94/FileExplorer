@@ -328,8 +328,20 @@ class FileExplorerViewModel(
 
             // Check if this is an external storage drive that requires SAF volume permission
             val isExternalVolume = isExternalStoragePath(targetPath)
+            val targetUuid = targetPath.trimEnd('/').substringAfterLast('/')
+            val matchingDrive = _uiState.value.drives.firstOrNull {
+                it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
+                (it.path == targetPath || targetPath.startsWith(it.path) ||
+                (treeUri != null && it.treeUri == treeUri) ||
+                (it.treeUri != null && (targetPath == it.treeUri || targetPath.startsWith(it.treeUri))) ||
+                it.path.contains(targetUuid) ||
+                it.id.contains(targetUuid) ||
+                (it.type == DriveType.SMARTPHONE && (targetPath.startsWith("mtp") || targetPath.contains("com.android.mtp.documents"))))
+            }
             val effectiveTreeUri = if (treeUri != null) {
                 treeUri
+            } else if (matchingDrive?.treeUri != null) {
+                matchingDrive.treeUri
             } else if (isExternalVolume) {
                 repository.getPersistedTreeUriForPath(targetPath)
             } else {
@@ -354,14 +366,6 @@ class FileExplorerViewModel(
                 }
             } else true
 
-            val targetUuid = targetPath.trimEnd('/').substringAfterLast('/')
-            val matchingDrive = _uiState.value.drives.firstOrNull {
-                it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
-                (it.path == targetPath || targetPath.startsWith(it.path) ||
-                it.path.contains(targetUuid) ||
-                it.id.contains(targetUuid) ||
-                (it.type == DriveType.SMARTPHONE && (targetPath.startsWith("mtp") || targetPath.contains("com.android.mtp.documents"))))
-            }
             val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
             val driveRootPath = matchingDrive?.path ?: targetPath
             val isReadOnly = isExternalVolume && effectiveTreeUri == null && !isDirectlyWritable
@@ -437,7 +441,9 @@ class FileExplorerViewModel(
     fun attachVolumeUri(path: String, uriString: String) {
         viewModelScope.launch {
             repository.saveVolumeTreeUri(path, uriString)
+            val isMtp = path.startsWith("mtp") || uriString.contains("com.android.mtp.documents")
             val targetUuid = path.trimEnd('/').substringAfterLast('/')
+            val targetNavPath = if (isMtp) uriString else path
 
             _uiState.update { state ->
                 val updatedDrives = state.drives.map { drive ->
@@ -445,15 +451,19 @@ class FileExplorerViewModel(
                         drive
                     } else {
                         val isMatch = drive.path == path ||
-                            (targetUuid.isNotEmpty() && (drive.path.contains(targetUuid) || drive.id.contains(targetUuid)))
+                            (targetUuid.isNotEmpty() && (drive.path.contains(targetUuid) || drive.id.contains(targetUuid))) ||
+                            (isMtp && drive.type == DriveType.SMARTPHONE)
                         if (isMatch) {
-                            drive.copy(treeUri = uriString)
+                            drive.copy(
+                                path = if (isMtp) uriString else drive.path,
+                                treeUri = uriString
+                            )
                         } else drive
                     }
                 }
                 val updatedTabs = state.tabs.map { tab ->
                     if (tab.id == state.activeTabId) {
-                        tab.copy(treeUri = uriString)
+                        tab.copy(path = targetNavPath, treeUri = uriString)
                     } else tab
                 }
                 state.copy(
@@ -467,7 +477,8 @@ class FileExplorerViewModel(
                     readOnlyVolumePath = ""
                 )
             }
-            navigateTo(path, uriString, addToHistory = false)
+            navigateTo(targetNavPath, uriString, addToHistory = false)
+            refreshDrives()
         }
     }
 
@@ -504,7 +515,23 @@ class FileExplorerViewModel(
         }
     }
 
+    fun refreshDrives() {
+        viewModelScope.launch {
+            try {
+                val drives = repository.getStorageDrives()
+                val cloudDrives = repository.getCloudDrives()
+                _uiState.update { state ->
+                    state.copy(
+                        drives = drives,
+                        cloudDrives = cloudDrives
+                    )
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
     fun refresh() {
+        refreshDrives()
         val current = _uiState.value
         navigateTo(current.currentPath, current.currentTreeUri, addToHistory = false)
     }
@@ -1226,8 +1253,11 @@ class FileExplorerViewModel(
         if (granted) {
             if (_uiState.value.tabs.isEmpty()) {
                 loadInitialData()
-            } else if (!wasGranted) {
-                refresh()
+            } else {
+                refreshDrives()
+                if (!wasGranted) {
+                    refresh()
+                }
             }
         }
     }
@@ -1312,6 +1342,8 @@ class FileExplorerViewModel(
 
         val rootName = matchingDrive?.name ?: if (treeUriStr.contains("com.android.externalstorage.documents")) {
             "External Drive"
+        } else if (treeUriStr.contains("com.android.mtp.documents") || treeUriStr.startsWith("mtp")) {
+            "Android Smartphone"
         } else {
             "Cloud Storage"
         }

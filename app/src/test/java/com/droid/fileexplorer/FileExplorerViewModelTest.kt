@@ -807,5 +807,32 @@ class FileExplorerViewModelTest {
         assertEquals("Google Pixel 8", state.volumeAccessName)
         assertEquals(phonePath, state.volumeAccessPath)
     }
+
+    @Test
+    fun testAttachVolumeUri_forSmartphone_immediatelyNavigatesAndUpdatesDriveWithoutRestart() = runTest(testDispatcher) {
+        val phonePath = "mtp://1/Internal storage"
+        val phoneDrive = DriveItem("phone1", "Google Pixel 8", phonePath, 128_000_000_000L, 64_000_000_000L, DriveType.SMARTPHONE)
+        repository.drives.add(phoneDrive)
+
+        viewModel.navigateTo(phonePath)
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.needsVolumeAccess)
+
+        val grantedMtpUri = "content://com.android.mtp.documents/tree/1"
+        repository.filesMap[grantedMtpUri] = mutableListOf(
+            FileItem("dcim", "DCIM", "$grantedMtpUri/DCIM", isDirectory = true),
+            FileItem("doc", "Download", "$grantedMtpUri/Download", isDirectory = true)
+        )
+
+        // Grant access via SAF
+        viewModel.attachVolumeUri(phonePath, grantedMtpUri)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.needsVolumeAccess)
+        assertEquals(grantedMtpUri, state.currentPath)
+        assertEquals(grantedMtpUri, state.currentTreeUri)
+        assertEquals(2, state.items.size)
+    }
 }
 
