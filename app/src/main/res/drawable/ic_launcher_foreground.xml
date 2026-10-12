@@ -1,0 +1,35 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Back folder flap (darker yellow/gold) -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M28,34 C28,31.79 29.79,30 32,30 L46,30 C48,30 49.5,31 50.8,32.5 L54,36 L76,36 C78.21,36 80,37.79 80,40 L80,72 C80,74.21 78.21,76 76,76 L32,76 C29.79,76 28,74.21 28,72 Z"/>
+    
+    <!-- White paper insert inside folder -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,42 C34,40.9 34.9,40 36,40 L72,40 C73.1,40 74,40.9 74,42 L74,58 L34,58 Z"/>
+    <!-- Windows blue accent document header line -->
+    <path
+        android:fillColor="#0078D4"
+        android:pathData="M40,45 L68,45 L68,47 L40,47 Z"/>
+    <path
+        android:fillColor="#94A3B8"
+        android:pathData="M40,50 L60,50 L60,52 L40,52 Z"/>
+
+    <!-- Front folder cover (bright fluent amber/yellow with rounded bottom corners) -->
+    <path
+        android:fillColor="#FBBF24"
+        android:pathData="M28,48 C28,45.79 29.79,44 32,44 L76,44 C78.21,44 80,45.79 80,48 L80,72 C80,75.31 77.31,78 74,78 L34,78 C30.69,78 28,75.31 28,72 Z"/>
+
+    <!-- Windows 11 style blue accent badge/strap -->
+    <path
+        android:fillColor="#0078D4"
+        android:pathData="M48,58 C48,55.79 49.79,54 52,54 L56,54 C58.21,54 60,55.79 60,58 L60,68 C60,69.1 59.1,70 58,70 L50,70 C48.9,70 48,69.1 48,68 Z"/>
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M52,57 L56,57 L56,60 L52,60 Z"/>
+</vector>
