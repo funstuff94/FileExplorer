@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.SdCard
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Tab
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Usb
@@ -543,6 +544,7 @@ private fun DriveItemRow(
         DriveType.USB -> Icons.Default.Usb
         DriveType.CLOUD -> Icons.Default.Cloud
         DriveType.INTERNAL -> Icons.Default.Computer
+        DriveType.SMARTPHONE -> Icons.Default.Smartphone
     }
 
     val iconTint = when (drive.type) {
@@ -551,6 +553,7 @@ private fun DriveItemRow(
         DriveType.USB -> Color(0xFF0078D4)
         DriveType.CLOUD -> Win11CloudBlue
         DriveType.INTERNAL -> Win11DriveBlue
+        DriveType.SMARTPHONE -> Color(0xFF107C41)
     }
 
     Box {

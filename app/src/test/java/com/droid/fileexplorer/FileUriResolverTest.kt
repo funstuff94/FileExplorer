@@ -33,12 +33,20 @@ class FileUriResolverTest {
 
         val primaryUri = "content://com.android.externalstorage.documents/tree/primary%3A"
         assertNull(FileUriResolver.extractVolumeUuid(primaryUri))
+
+        val mtpTreeUri = "content://com.android.mtp.documents/tree/1"
+        assertEquals("mtp_1", FileUriResolver.extractVolumeUuid(mtpTreeUri))
+
+        val mtpPath = "mtp://1/Internal storage/DCIM"
+        assertEquals("mtp_1", FileUriResolver.extractVolumeUuid(mtpPath))
     }
 
     @Test
     fun isExternalStoragePath_verifiesCorrectVolumes() {
         assertTrue(FileUriResolver.isExternalStoragePath("/storage/1234-5678/Music/song.mp3"))
         assertTrue(FileUriResolver.isExternalStoragePath("/mnt/media_rw/ABCD-1234/file.flac"))
+        assertTrue(FileUriResolver.isExternalStoragePath("content://com.android.mtp.documents/tree/1"))
+        assertTrue(FileUriResolver.isExternalStoragePath("mtp://1/Internal storage"))
         assertFalse(FileUriResolver.isExternalStoragePath("/storage/emulated/0/Download"))
         assertFalse(FileUriResolver.isExternalStoragePath("/storage/emulated/10/Apps"))
     }

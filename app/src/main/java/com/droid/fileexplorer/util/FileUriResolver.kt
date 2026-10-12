@@ -42,8 +42,23 @@ object FileUriResolver {
                 val match = Regex("""(?:tree|document)/([A-Za-z0-9_-]+):""").find(decoded)
                 val id = match?.groupValues?.getOrNull(1)
                 return if (id != null && id != "primary") id else null
+            } else if (clean.contains("com.android.mtp.documents")) {
+                val decoded = try {
+                    URLDecoder.decode(clean, "UTF-8")
+                } catch (_: Exception) {
+                    clean
+                }
+                val match = Regex("""(?:tree|document)/([A-Za-z0-9_,%-]+)""").find(decoded)
+                val docId = match?.groupValues?.getOrNull(1)
+                return if (docId != null) "mtp_$docId" else "mtp"
             }
             return null
+        }
+
+        if (clean.startsWith("mtp://")) {
+            val rest = clean.removePrefix("mtp://").trim('/')
+            val id = rest.substringBefore('/')
+            return if (id.isNotEmpty()) "mtp_$id" else "mtp"
         }
 
         if (clean.startsWith("/storage/")) {
@@ -70,8 +85,9 @@ object FileUriResolver {
      */
     fun isExternalStoragePath(path: String): Boolean {
         val clean = path.trimEnd('/')
-        return (!clean.startsWith("/storage/emulated") && !clean.startsWith("/mnt/shared") &&
-                (clean.startsWith("/storage/") || clean.startsWith("/mnt/media_rw/")) &&
+        if (clean.startsWith("/storage/emulated") || clean.startsWith("/mnt/shared")) return false
+        if (clean.startsWith("mtp://") || clean.contains("com.android.mtp.documents")) return true
+        return ((clean.startsWith("/storage/") || clean.startsWith("/mnt/media_rw/")) &&
                 extractVolumeUuid(clean) != null)
     }
 
@@ -127,12 +143,16 @@ object FileUriResolver {
             if (!savedByRootPath.isNullOrEmpty()) return savedByRootPath
         } catch (_: Exception) {}
 
-        // 2. Check Android ContentResolver's persistedUriPermissions strictly by UUID
+        // 2. Check Android ContentResolver's persistedUriPermissions
         try {
             val perms = context.contentResolver.persistedUriPermissions
+            val isMtp = extractedUuid.startsWith("mtp") || cleanPath.startsWith("mtp") || cleanPath.contains("com.android.mtp.documents")
             for (perm in perms) {
                 if (!perm.isReadPermission) continue
                 val uriStr = perm.uri.toString()
+                if (isMtp && uriStr.contains("com.android.mtp.documents")) {
+                    return uriStr
+                }
                 val decoded = Uri.decode(uriStr)
                 if (uriStr.contains(extractedUuid, ignoreCase = true) || decoded.contains(extractedUuid, ignoreCase = true)) {
                     return uriStr

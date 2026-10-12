@@ -359,7 +359,8 @@ class FileExplorerViewModel(
                 it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
                 (it.path == targetPath || targetPath.startsWith(it.path) ||
                 it.path.contains(targetUuid) ||
-                it.id.contains(targetUuid))
+                it.id.contains(targetUuid) ||
+                (it.type == DriveType.SMARTPHONE && (targetPath.startsWith("mtp") || targetPath.contains("com.android.mtp.documents"))))
             }
             val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
             val driveRootPath = matchingDrive?.path ?: targetPath
@@ -1368,6 +1369,9 @@ class FileExplorerViewModel(
         val clean = path.trimEnd('/')
         if (clean.isEmpty() || clean == "/storage" || clean.startsWith("/storage/emulated") || clean.startsWith("/storage/self") || clean.startsWith("/mnt/shared")) {
             return false
+        }
+        if (clean.startsWith("mtp://") || clean.contains("com.android.mtp.documents")) {
+            return true
         }
         return clean.startsWith("/mnt/media_rw") ||
                clean.startsWith("/mnt/pass_through") ||

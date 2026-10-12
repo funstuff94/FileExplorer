@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -45,8 +46,14 @@ import com.droid.fileexplorer.theme.Win11Blue
 fun VolumeAccessCard(
     driveName: String,
     onGrantAccess: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isSmartphone: Boolean = false
 ) {
+    val isPhone = isSmartphone || driveName.contains("Phone", ignoreCase = true) ||
+        driveName.contains("Pixel", ignoreCase = true) ||
+        driveName.contains("Galaxy", ignoreCase = true) ||
+        driveName.contains("Android", ignoreCase = true)
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -75,7 +82,7 @@ fun VolumeAccessCard(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                // Large Windows 11 Drive / USB Icon Badge
+                // Large Windows 11 Drive / USB / Smartphone Icon Badge
                 Box(
                     modifier = Modifier
                         .size(80.dp)
@@ -85,8 +92,8 @@ fun VolumeAccessCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Usb,
-                        contentDescription = "External Storage",
+                        imageVector = if (isPhone) Icons.Default.Smartphone else Icons.Default.Usb,
+                        contentDescription = if (isPhone) "Smartphone" else "External Storage",
                         tint = Win11Blue,
                         modifier = Modifier.size(44.dp)
                     )
@@ -95,7 +102,7 @@ fun VolumeAccessCard(
                 Spacer(modifier = Modifier.height(20.dp))
 
                 Text(
-                    text = "Permission Required to Access Drive",
+                    text = if (isPhone) "Permission Required to Access Smartphone" else "Permission Required to Access Drive",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -122,7 +129,11 @@ fun VolumeAccessCard(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "Android and ChromeOS protect secondary external storage (USB drives and external hard drives) by requiring a one-time access grant.\n\nClick below to select this drive and allow the file explorer to read and manage all contents.",
+                    text = if (isPhone) {
+                        "Your connected Android smartphone requires a one-time permission grant via Android's Media Transfer Protocol (MTP).\n\nClick below to select this device or its storage and grant File Explorer full access to browse and transfer files."
+                    } else {
+                        "Android and ChromeOS protect secondary external storage (USB drives and external hard drives) by requiring a one-time access grant.\n\nClick below to select this drive and allow the file explorer to read and manage all contents."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -148,7 +159,7 @@ fun VolumeAccessCard(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "Grant Access to Drive",
+                        text = if (isPhone) "Grant Access to Smartphone" else "Grant Access to Drive",
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 15.sp

@@ -129,7 +129,8 @@ enum class DriveType {
     LINUX_SHARED,
     SD_CARD,
     USB,
-    CLOUD
+    CLOUD,
+    SMARTPHONE
 }
 
 data class DriveItem(
