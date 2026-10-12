@@ -226,7 +226,7 @@ fun MainContentGrid(
             )
             .onGloballyPositioned { containerCoordinates = it }
             .pointerInput(Unit) {
-                detectDragGestures(
+                detectPrimaryDragGestures(
                     onDragStart = { offset ->
                         dragStart = offset
                         dragCurrent = offset
@@ -265,7 +265,7 @@ fun MainContentGrid(
                         }
                     },
                     onDrag = { change, dragAmount ->
-                        val start = dragStart ?: return@detectDragGestures
+                        val start = dragStart ?: return@detectPrimaryDragGestures
                         val current = (dragCurrent ?: start) + dragAmount
                         dragCurrent = current
 
@@ -398,6 +398,11 @@ fun MainContentGrid(
                         onDelete = { onDelete(item) },
                         onShare = { onShare(item) },
                         onProperties = { onProperties(item) },
+                        onContextMenu = {
+                            if (!selectedPaths.contains(item.path)) {
+                                onSelectionChange(setOf(item.path))
+                            }
+                        },
                         onNewFolderIn = onNewFolderIn,
                         onNewFileIn = onNewFileIn
                     )
@@ -547,6 +552,7 @@ private fun GridItemCard(
     onDelete: () -> Unit,
     onShare: () -> Unit,
     onProperties: () -> Unit,
+    onContextMenu: (() -> Unit)? = null,
     onNewFolderIn: (FileItem) -> Unit = {},
     onNewFileIn: (FileItem) -> Unit = {}
 ) {
@@ -582,7 +588,10 @@ private fun GridItemCard(
                 .contextClickable(
                     onClickWithModifiers = onClick,
                     onDoubleClick = onDoubleClick,
-                    onContextMenu = { showContextMenu = true }
+                    onContextMenu = {
+                        onContextMenu?.invoke()
+                        showContextMenu = true
+                    }
                 )
         ) {
             Column(

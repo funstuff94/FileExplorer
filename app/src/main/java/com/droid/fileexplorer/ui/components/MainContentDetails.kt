@@ -228,7 +228,7 @@ fun MainContentDetails(
             )
             .onGloballyPositioned { containerCoordinates = it }
             .pointerInput(Unit) {
-                detectDragGestures(
+                detectPrimaryDragGestures(
                     onDragStart = { offset ->
                         dragStart = offset
                         dragCurrent = offset
@@ -267,7 +267,7 @@ fun MainContentDetails(
                         }
                     },
                     onDrag = { change, dragAmount ->
-                        val start = dragStart ?: return@detectDragGestures
+                        val start = dragStart ?: return@detectPrimaryDragGestures
                         val current = (dragCurrent ?: start) + dragAmount
                         dragCurrent = current
 
@@ -443,7 +443,12 @@ fun MainContentDetails(
                                     .contextClickable(
                                         onClickWithModifiers = { isCtrl, isShift -> onItemClick(item, isCtrl, isShift) },
                                         onDoubleClick = { onItemDoubleClick(item) },
-                                        onContextMenu = { showContextMenu = true }
+                                        onContextMenu = {
+                                            if (!selectedPaths.contains(item.path)) {
+                                                onSelectionChange(setOf(item.path))
+                                            }
+                                            showContextMenu = true
+                                        }
                                     )
                             ) {
                                 Row(
