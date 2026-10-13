@@ -74,6 +74,7 @@ import com.droid.fileexplorer.ui.components.WindowsTopBar
 import com.droid.fileexplorer.ui.dialogs.DeleteConfirmDialog
 import com.droid.fileexplorer.ui.dialogs.FileTransferDialog
 import com.droid.fileexplorer.ui.dialogs.NewItemDialog
+import com.droid.fileexplorer.ui.dialogs.OpenWithDialog
 import com.droid.fileexplorer.ui.dialogs.PropertiesDialog
 import com.droid.fileexplorer.ui.dialogs.RenameDialog
 import android.os.storage.StorageManager
@@ -97,6 +98,7 @@ fun FileExplorerApp(
     var renameTarget by remember { mutableStateOf<FileItem?>(null) }
     var deleteTargetCount by remember { mutableStateOf<Int?>(null) }
     var propertiesTarget by remember { mutableStateOf<FileItem?>(null) }
+    var openWithTarget by remember { mutableStateOf<FileItem?>(null) }
     var isEditingAddress by remember { mutableStateOf(false) }
     var newItemTargetFolder by remember { mutableStateOf<FileItem?>(null) }
 
@@ -590,6 +592,7 @@ fun FileExplorerApp(
                                     deleteTargetCount = toDelete.size
                                 },
                                 onShare = { item -> FileOpener.shareFile(context, item) },
+                                onOpenWith = { openWithTarget = it },
                                 onProperties = { item -> propertiesTarget = item },
                                 showVideoThumbnails = uiState.showVideoThumbnails,
                                 onToggleVideoThumbnails = { viewModel.toggleVideoThumbnails() },
@@ -652,6 +655,7 @@ fun FileExplorerApp(
                                     deleteTargetCount = toDelete.size
                                 },
                                 onShare = { item -> FileOpener.shareFile(context, item) },
+                                onOpenWith = { openWithTarget = it },
                                 onProperties = { item -> propertiesTarget = item },
                                 showVideoThumbnails = uiState.showVideoThumbnails,
                                 onToggleVideoThumbnails = { viewModel.toggleVideoThumbnails() },
@@ -767,6 +771,21 @@ fun FileExplorerApp(
         PropertiesDialog(
             item = item,
             onDismiss = { propertiesTarget = null }
+        )
+    }
+
+    openWithTarget?.let { item ->
+        OpenWithDialog(
+            item = item,
+            onDismiss = { openWithTarget = null },
+            onOpenWithApp = { app ->
+                openWithTarget = null
+                FileOpener.openWithApp(context, item, app)
+            },
+            onOpenWithSystemChooser = {
+                openWithTarget = null
+                FileOpener.openWithSystemChooser(context, item)
+            }
         )
     }
 

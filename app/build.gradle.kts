@@ -11,8 +11,8 @@ android {
         applicationId = "com.droid.fileexplorer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 27
-        versionName = "2.16"
+        versionCode = 28
+        versionName = "2.17"
 
         ndk {
             abiFilters.addAll(listOf("arm64-v8a", "x86_64"))

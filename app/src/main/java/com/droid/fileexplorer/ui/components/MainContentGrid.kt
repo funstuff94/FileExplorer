@@ -27,14 +27,20 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.Image
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.OpenInNew
+import com.droid.fileexplorer.model.AppInfo
+import com.droid.fileexplorer.util.FileOpener
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
@@ -126,6 +132,7 @@ fun MainContentGrid(
     onRename: (FileItem) -> Unit,
     onDelete: (FileItem) -> Unit,
     onShare: (FileItem) -> Unit,
+    onOpenWith: (FileItem) -> Unit = {},
     onProperties: (FileItem) -> Unit,
     showVideoThumbnails: Boolean = true,
     onToggleVideoThumbnails: () -> Unit = {},
@@ -422,6 +429,7 @@ fun MainContentGrid(
                         onRename = { onRename(item) },
                         onDelete = { onDelete(item) },
                         onShare = { onShare(item) },
+                        onOpenWith = { onOpenWith(item) },
                         onProperties = { onProperties(item) },
                         showVideoThumbnails = showVideoThumbnails,
                         onToggleVideoThumbnails = onToggleVideoThumbnails,
@@ -636,6 +644,7 @@ private fun GridItemCard(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
+    onOpenWith: () -> Unit = {},
     onProperties: () -> Unit,
     showVideoThumbnails: Boolean = true,
     onToggleVideoThumbnails: () -> Unit = {},
@@ -801,6 +810,94 @@ private fun GridItemCard(
                     onDoubleClick()
                 }
             )
+
+            if (!item.isDirectory) {
+                var showOpenWithSubmenu by remember { mutableStateOf(false) }
+                val context = LocalView.current.context
+                var commonApps by remember { mutableStateOf<List<AppInfo>>(emptyList()) }
+
+                androidx.compose.runtime.LaunchedEffect(showContextMenu) {
+                    if (showContextMenu) {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            commonApps = FileOpener.getCommonAppsForFile(context, item)
+                        }
+                    }
+                }
+
+                Box {
+                    DropdownMenuItem(
+                        text = { Text("Open with") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.OpenInNew,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.ChevronRight,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        onClick = {
+                            showOpenWithSubmenu = true
+                        }
+                    )
+
+                    DropdownMenu(
+                        expanded = showOpenWithSubmenu,
+                        onDismissRequest = { showOpenWithSubmenu = false }
+                    ) {
+                        if (commonApps.isNotEmpty()) {
+                            commonApps.take(6).forEach { app ->
+                                DropdownMenuItem(
+                                    text = { Text(app.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    leadingIcon = {
+                                        if (app.iconBitmap != null) {
+                                            Image(
+                                                bitmap = app.iconBitmap,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.Apps,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        showOpenWithSubmenu = false
+                                        showContextMenu = false
+                                        FileOpener.openWithApp(context, item, app)
+                                    }
+                                )
+                            }
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        }
+
+                        DropdownMenuItem(
+                            text = { Text("Choose another app...") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Apps,
+                                    contentDescription = null,
+                                    tint = Win11Blue,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = {
+                                showOpenWithSubmenu = false
+                                showContextMenu = false
+                                onOpenWith()
+                            }
+                        )
+                    }
+                }
+            }
 
             if (item.isDirectory || (item.isShortcut && item.shortcutTargetIsDirectory)) {
                 DropdownMenuItem(

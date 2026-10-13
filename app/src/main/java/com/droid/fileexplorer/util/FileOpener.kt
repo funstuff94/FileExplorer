@@ -4,11 +4,18 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.FileProvider
+import com.droid.fileexplorer.model.AppInfo
 import com.droid.fileexplorer.model.FileItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -212,6 +219,166 @@ object FileOpener {
             })
         } catch (e: Exception) {
             Toast.makeText(context, "Cannot share file: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun getCommonAppsForFile(context: Context, item: FileItem): List<AppInfo> {
+        val ext = item.extension.lowercase()
+        val isApk = ext == "apk" || item.mimeType == "application/vnd.android.package-archive"
+        val pm = context.packageManager
+
+        val uri: Uri = FileUriResolver.resolveFileUri(context, item) ?: return emptyList()
+        val mimeType = if (isApk) "application/vnd.android.package-archive" else FileUriResolver.getMimeType(context, item, uri)
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        val resolveInfos = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0L))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentActivities(intent, 0)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        val myPackage = context.packageName
+        val seen = mutableSetOf<String>()
+        val result = mutableListOf<AppInfo>()
+
+        for (info in resolveInfos) {
+            val pkg = info.activityInfo?.packageName ?: continue
+            if (pkg == myPackage) continue
+            val activity = info.activityInfo.name ?: continue
+            val key = "$pkg/$activity"
+            if (seen.add(key)) {
+                val label = try { info.loadLabel(pm).toString().ifBlank { pkg } } catch (_: Exception) { pkg }
+                val iconBitmap = try { info.loadIcon(pm)?.toImageBitmap() } catch (_: Exception) { null }
+                result.add(AppInfo(label = label, packageName = pkg, activityName = activity, iconBitmap = iconBitmap))
+            }
+        }
+        return result.sortedBy { it.label.lowercase() }
+    }
+
+    fun getAllInstalledApps(context: Context): List<AppInfo> {
+        val pm = context.packageManager
+        val intent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+
+        val resolveInfos = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0L))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentActivities(intent, 0)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        val myPackage = context.packageName
+        val seen = mutableSetOf<String>()
+        val result = mutableListOf<AppInfo>()
+
+        for (info in resolveInfos) {
+            val pkg = info.activityInfo?.packageName ?: continue
+            if (pkg == myPackage) continue
+            val activity = info.activityInfo.name ?: continue
+            if (seen.add(pkg)) {
+                val label = try { info.loadLabel(pm).toString().ifBlank { pkg } } catch (_: Exception) { pkg }
+                val iconBitmap = try { info.loadIcon(pm)?.toImageBitmap() } catch (_: Exception) { null }
+                result.add(AppInfo(label = label, packageName = pkg, activityName = activity, iconBitmap = iconBitmap))
+            }
+        }
+        return result.sortedBy { it.label.lowercase() }
+    }
+
+    fun openWithApp(context: Context, item: FileItem, app: AppInfo) {
+        val ext = item.extension.lowercase()
+        val isApk = ext == "apk" || item.mimeType == "application/vnd.android.package-archive"
+
+        try {
+            val uri: Uri = FileUriResolver.resolveFileUri(context, item) ?: run {
+                Toast.makeText(context, "Cannot locate file: ${item.name}", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            val mimeType = if (isApk) "application/vnd.android.package-archive" else FileUriResolver.getMimeType(context, item, uri)
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mimeType)
+                setClassName(app.packageName, app.activityName)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            try {
+                context.grantUriPermission(app.packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: Exception) {}
+
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val uri: Uri = FileUriResolver.resolveFileUri(context, item) ?: return
+                val fallbackIntent = Intent(Intent.ACTION_VIEW).apply {
+                    data = uri
+                    setClassName(app.packageName, app.activityName)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(fallbackIntent)
+            } catch (e2: Exception) {
+                Toast.makeText(context, "Could not open with ${app.label}: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun openWithSystemChooser(context: Context, item: FileItem) {
+        val ext = item.extension.lowercase()
+        val isApk = ext == "apk" || item.mimeType == "application/vnd.android.package-archive"
+
+        try {
+            val uri: Uri = FileUriResolver.resolveFileUri(context, item) ?: run {
+                Toast.makeText(context, "Cannot locate file: ${item.name}", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            val mimeType = if (isApk) "application/vnd.android.package-archive" else FileUriResolver.getMimeType(context, item, uri)
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mimeType)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            val chooser = Intent.createChooser(intent, "Open with ${item.name}").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Could not open chooser: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun Drawable.toImageBitmap(): ImageBitmap? {
+        return try {
+            if (this is BitmapDrawable && bitmap != null) {
+                return bitmap.asImageBitmap()
+            }
+            val w = if (intrinsicWidth > 0) minOf(intrinsicWidth, 192) else 72
+            val h = if (intrinsicHeight > 0) minOf(intrinsicHeight, 192) else 72
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            setBounds(0, 0, canvas.width, canvas.height)
+            draw(canvas)
+            bmp.asImageBitmap()
+        } catch (_: Exception) {
+            null
         }
     }
 }
