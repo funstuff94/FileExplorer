@@ -49,6 +49,7 @@
         android:theme="@style/Theme.FileExplorer">
         <activity
             android:name=".MainActivity"
+            android:theme="@style/Theme.FileExplorer"
             android:exported="true"
             android:launchMode="standard"
             android:documentLaunchMode="always"
