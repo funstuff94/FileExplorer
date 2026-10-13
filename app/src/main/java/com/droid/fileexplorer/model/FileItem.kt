@@ -103,6 +103,7 @@ data class Breadcrumb(
 )
 
 enum class ViewMode {
+    EXTRA_LARGE,
     GRID,
     DETAILS
 }

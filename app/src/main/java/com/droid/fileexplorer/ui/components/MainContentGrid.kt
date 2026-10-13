@@ -42,10 +42,12 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tab
+import androidx.compose.material.icons.filled.TableRows
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.DropdownMenu
@@ -92,6 +94,7 @@ import androidx.compose.ui.platform.LocalView
 import com.droid.fileexplorer.data.FileDragShadowBuilder
 import com.droid.fileexplorer.data.SharedDragDropManager
 import com.droid.fileexplorer.model.FileItem
+import com.droid.fileexplorer.model.ViewMode
 import com.droid.fileexplorer.theme.Win11Blue
 import kotlin.math.roundToInt
 
@@ -124,6 +127,8 @@ fun MainContentGrid(
     onProperties: (FileItem) -> Unit,
     showVideoThumbnails: Boolean = true,
     onToggleVideoThumbnails: () -> Unit = {},
+    viewMode: ViewMode = ViewMode.GRID,
+    onViewModeChange: (ViewMode) -> Unit = {},
     onNewFolder: () -> Unit = {},
     onNewFile: () -> Unit = {},
     onNewFolderIn: (FileItem) -> Unit = {},
@@ -342,10 +347,10 @@ fun MainContentGrid(
             }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 120.dp),
+                columns = GridCells.Adaptive(minSize = if (viewMode == ViewMode.EXTRA_LARGE) 180.dp else 120.dp),
                 contentPadding = PaddingValues(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (viewMode == ViewMode.EXTRA_LARGE) 12.dp else 8.dp),
+                verticalArrangement = Arrangement.spacedBy(if (viewMode == ViewMode.EXTRA_LARGE) 12.dp else 8.dp),
                 modifier = Modifier
                     .fillMaxSize()
                     .contextClickable(
@@ -373,6 +378,7 @@ fun MainContentGrid(
                         isBeingDragged = isBeingDragged,
                         isDropTarget = isDropTarget,
                         canPaste = canPaste,
+                        viewMode = viewMode,
                         onPositioned = { coords ->
                             containerCoordinates?.let { parent ->
                                 if (parent.isAttached && coords.isAttached) {
@@ -538,6 +544,40 @@ fun MainContentGrid(
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             DropdownMenuItem(
+                text = { Text("Extra large icons") },
+                leadingIcon = {
+                    if (viewMode == ViewMode.EXTRA_LARGE) Icon(Icons.Default.Check, contentDescription = null, tint = Win11Blue)
+                    else Icon(Icons.Default.GridView, contentDescription = null)
+                },
+                onClick = {
+                    showBackgroundMenu = false
+                    onViewModeChange(ViewMode.EXTRA_LARGE)
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Large icons") },
+                leadingIcon = {
+                    if (viewMode == ViewMode.GRID) Icon(Icons.Default.Check, contentDescription = null, tint = Win11Blue)
+                    else Icon(Icons.Default.GridView, contentDescription = null)
+                },
+                onClick = {
+                    showBackgroundMenu = false
+                    onViewModeChange(ViewMode.GRID)
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Details") },
+                leadingIcon = {
+                    if (viewMode == ViewMode.DETAILS) Icon(Icons.Default.Check, contentDescription = null, tint = Win11Blue)
+                    else Icon(Icons.Default.TableRows, contentDescription = null)
+                },
+                onClick = {
+                    showBackgroundMenu = false
+                    onViewModeChange(ViewMode.DETAILS)
+                }
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            DropdownMenuItem(
                 text = { Text("Refresh") },
                 leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
                 onClick = {
@@ -576,11 +616,16 @@ private fun GridItemCard(
     onProperties: () -> Unit,
     showVideoThumbnails: Boolean = true,
     onToggleVideoThumbnails: () -> Unit = {},
+    viewMode: ViewMode = ViewMode.GRID,
     onContextMenu: (() -> Unit)? = null,
     onNewFolderIn: (FileItem) -> Unit = {},
     onNewFileIn: (FileItem) -> Unit = {}
 ) {
     var showContextMenu by remember { mutableStateOf(false) }
+
+    val isExtraLarge = viewMode == ViewMode.EXTRA_LARGE
+    val cardHeight = if (isExtraLarge) 205.dp else 130.dp
+    val iconSize = if (isExtraLarge) 96.dp else 44.dp
 
     val cardColor = when {
         isDropTarget -> Win11Blue.copy(alpha = 0.22f)
@@ -601,7 +646,7 @@ private fun GridItemCard(
             color = cardColor,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(130.dp)
+                .height(cardHeight)
                 .alpha(cardAlpha)
                 .clip(RoundedCornerShape(8.dp))
                 .border(
@@ -623,7 +668,7 @@ private fun GridItemCard(
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(6.dp)
+                    .padding(if (isExtraLarge) 8.dp else 6.dp)
             ) {
                 // Top Badges Row: Checkbox, Pin, and Options (3-dots)
                 Row(
@@ -684,14 +729,14 @@ private fun GridItemCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(if (isExtraLarge) 4.dp else 2.dp))
 
                 // File/Folder Icon
                 Box(modifier = Modifier.onGloballyPositioned(onIconPositioned)) {
-                    FileTypeIcon(item = item, size = 44.dp, showVideoThumbnail = showVideoThumbnails)
+                    FileTypeIcon(item = item, size = iconSize, showVideoThumbnail = showVideoThumbnails)
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(if (isExtraLarge) 8.dp else 6.dp))
 
                 // File Name
                 Text(
@@ -699,7 +744,7 @@ private fun GridItemCard(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
-                    maxLines = 1,
+                    maxLines = if (isExtraLarge) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth()
                 )

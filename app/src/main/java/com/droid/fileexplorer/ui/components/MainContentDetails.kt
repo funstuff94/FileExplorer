@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.FolderOff
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tab
+import androidx.compose.material.icons.filled.TableRows
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.DropdownMenu
@@ -87,6 +89,7 @@ import androidx.compose.ui.platform.LocalView
 import com.droid.fileexplorer.data.FileDragShadowBuilder
 import com.droid.fileexplorer.data.SharedDragDropManager
 import com.droid.fileexplorer.model.FileItem
+import com.droid.fileexplorer.model.ViewMode
 import com.droid.fileexplorer.theme.Win11Blue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.DpOffset
@@ -126,6 +129,8 @@ fun MainContentDetails(
     onProperties: (FileItem) -> Unit,
     showVideoThumbnails: Boolean = true,
     onToggleVideoThumbnails: () -> Unit = {},
+    viewMode: ViewMode = ViewMode.DETAILS,
+    onViewModeChange: (ViewMode) -> Unit = {},
     onNewFolder: () -> Unit = {},
     onNewFile: () -> Unit = {},
     onNewFolderIn: (FileItem) -> Unit = {},
@@ -876,6 +881,40 @@ fun MainContentDetails(
                 onClick = {
                     showBackgroundMenu = false
                     onToggleVideoThumbnails()
+                }
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            DropdownMenuItem(
+                text = { Text("Extra large icons") },
+                leadingIcon = {
+                    if (viewMode == ViewMode.EXTRA_LARGE) Icon(Icons.Default.Check, contentDescription = null, tint = Win11Blue)
+                    else Icon(Icons.Default.GridView, contentDescription = null)
+                },
+                onClick = {
+                    showBackgroundMenu = false
+                    onViewModeChange(ViewMode.EXTRA_LARGE)
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Large icons") },
+                leadingIcon = {
+                    if (viewMode == ViewMode.GRID) Icon(Icons.Default.Check, contentDescription = null, tint = Win11Blue)
+                    else Icon(Icons.Default.GridView, contentDescription = null)
+                },
+                onClick = {
+                    showBackgroundMenu = false
+                    onViewModeChange(ViewMode.GRID)
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Details") },
+                leadingIcon = {
+                    if (viewMode == ViewMode.DETAILS) Icon(Icons.Default.Check, contentDescription = null, tint = Win11Blue)
+                    else Icon(Icons.Default.TableRows, contentDescription = null)
+                },
+                onClick = {
+                    showBackgroundMenu = false
+                    onViewModeChange(ViewMode.DETAILS)
                 }
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))

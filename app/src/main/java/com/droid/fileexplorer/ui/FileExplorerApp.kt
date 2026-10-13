@@ -550,7 +550,7 @@ fun FileExplorerApp(
                     }
 
                     when (uiState.viewMode) {
-                        ViewMode.GRID -> {
+                        ViewMode.GRID, ViewMode.EXTRA_LARGE -> {
                             MainContentGrid(
                                 items = uiState.filteredItems,
                                 selectedPaths = uiState.selectedItemPaths,
@@ -558,6 +558,8 @@ fun FileExplorerApp(
                                 currentFolderName = uiState.currentFolderName,
                                 currentTreeUri = uiState.currentTreeUri,
                                 canPaste = uiState.canPaste,
+                                viewMode = uiState.viewMode,
+                                onViewModeChange = { viewModel.setViewMode(it) },
                                 onItemClick = handleItemSelectionClick,
                                 onItemDoubleClick = handleItemClick,
                                 onItemSelect = { item -> viewModel.toggleSelect(item.path) },
@@ -618,6 +620,8 @@ fun FileExplorerApp(
                                 currentFolderName = uiState.currentFolderName,
                                 currentTreeUri = uiState.currentTreeUri,
                                 canPaste = uiState.canPaste,
+                                viewMode = uiState.viewMode,
+                                onViewModeChange = { viewModel.setViewMode(it) },
                                 onItemClick = handleItemSelectionClick,
                                 onItemDoubleClick = handleItemClick,
                                 onItemSelect = { item -> viewModel.toggleSelect(item.path) },

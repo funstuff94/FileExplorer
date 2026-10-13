@@ -93,7 +93,8 @@ class FileExplorerViewModel(
 
     init {
         val initialThumbnails = repository.isVideoThumbnailsEnabled()
-        _uiState.update { it.copy(showVideoThumbnails = initialThumbnails) }
+        val initialViewMode = repository.getViewMode()
+        _uiState.update { it.copy(showVideoThumbnails = initialThumbnails, viewMode = initialViewMode) }
         loadInitialData()
         observeSharedState()
     }
@@ -561,6 +562,7 @@ class FileExplorerViewModel(
     }
 
     fun setViewMode(mode: ViewMode) {
+        repository.setViewMode(mode)
         _uiState.update { it.copy(viewMode = mode) }
     }
 

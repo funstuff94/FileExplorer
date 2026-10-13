@@ -3,6 +3,7 @@ package com.droid.fileexplorer.data
 import com.droid.fileexplorer.model.DriveItem
 import com.droid.fileexplorer.model.FileItem
 import com.droid.fileexplorer.model.QuickAccessItem
+import com.droid.fileexplorer.model.ViewMode
 
 interface FileRepository {
     suspend fun listFiles(path: String, treeUri: String? = null): List<FileItem>
@@ -42,4 +43,6 @@ interface FileRepository {
     suspend fun exists(path: String, treeUri: String? = null): Boolean = true
     fun isVideoThumbnailsEnabled(): Boolean = true
     fun setVideoThumbnailsEnabled(enabled: Boolean) {}
+    fun getViewMode(): ViewMode = ViewMode.GRID
+    fun setViewMode(mode: ViewMode) {}
 }

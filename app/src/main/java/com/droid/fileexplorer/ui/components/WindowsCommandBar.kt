@@ -318,7 +318,7 @@ fun WindowsCommandBar(
                         .padding(horizontal = 8.dp, vertical = 6.dp)
                 ) {
                     Icon(
-                        imageVector = if (viewMode == ViewMode.GRID) Icons.Default.GridView else Icons.Default.TableRows,
+                        imageVector = if (viewMode == ViewMode.DETAILS) Icons.Default.TableRows else Icons.Default.GridView,
                         contentDescription = "View",
                         modifier = Modifier.size(18.dp)
                     )
@@ -336,9 +336,20 @@ fun WindowsCommandBar(
                     onDismissRequest = { showViewMenu = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Grid (Large Icons)") },
+                        text = { Text("Extra large icons") },
                         leadingIcon = {
-                            if (viewMode == ViewMode.GRID) Icon(Icons.Default.Check, contentDescription = null)
+                            if (viewMode == ViewMode.EXTRA_LARGE) Icon(Icons.Default.Check, contentDescription = null, tint = Win11Blue)
+                            else Icon(Icons.Default.GridView, contentDescription = null)
+                        },
+                        onClick = {
+                            showViewMenu = false
+                            onViewModeChange(ViewMode.EXTRA_LARGE)
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Large icons") },
+                        leadingIcon = {
+                            if (viewMode == ViewMode.GRID) Icon(Icons.Default.Check, contentDescription = null, tint = Win11Blue)
                             else Icon(Icons.Default.GridView, contentDescription = null)
                         },
                         onClick = {
@@ -347,9 +358,9 @@ fun WindowsCommandBar(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Details (Table)") },
+                        text = { Text("Details") },
                         leadingIcon = {
-                            if (viewMode == ViewMode.DETAILS) Icon(Icons.Default.Check, contentDescription = null)
+                            if (viewMode == ViewMode.DETAILS) Icon(Icons.Default.Check, contentDescription = null, tint = Win11Blue)
                             else Icon(Icons.Default.TableRows, contentDescription = null)
                         },
                         onClick = {

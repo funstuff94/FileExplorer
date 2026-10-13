@@ -17,6 +17,7 @@ import com.droid.fileexplorer.model.DriveType
 import com.droid.fileexplorer.model.FileItem
 import com.droid.fileexplorer.model.QuickAccessItem
 import com.droid.fileexplorer.model.QuickAccessType
+import com.droid.fileexplorer.model.ViewMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -1717,5 +1718,18 @@ class DefaultFileRepository(
 
     override fun setVideoThumbnailsEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("show_video_thumbnails", enabled).apply()
+    }
+
+    override fun getViewMode(): ViewMode {
+        val modeName = prefs.getString("view_mode", ViewMode.GRID.name) ?: ViewMode.GRID.name
+        return try {
+            ViewMode.valueOf(modeName)
+        } catch (_: Exception) {
+            ViewMode.GRID
+        }
+    }
+
+    override fun setViewMode(mode: ViewMode) {
+        prefs.edit().putString("view_mode", mode.name).apply()
     }
 }

@@ -184,6 +184,12 @@ class FakeFileRepository : FileRepository {
     override fun setVideoThumbnailsEnabled(enabled: Boolean) {
         videoThumbnailsEnabled = enabled
     }
+
+    private var currentViewMode = ViewMode.GRID
+    override fun getViewMode(): ViewMode = currentViewMode
+    override fun setViewMode(mode: ViewMode) {
+        currentViewMode = mode
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -866,6 +872,24 @@ class FileExplorerViewModelTest {
         viewModel.setShowVideoThumbnails(true)
         assertTrue(viewModel.uiState.value.showVideoThumbnails)
         assertTrue(repository.isVideoThumbnailsEnabled())
+    }
+
+    @Test
+    fun testSetViewMode_extraLarge_updatesStateAndPersists() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        assertEquals(ViewMode.GRID, viewModel.uiState.value.viewMode)
+
+        viewModel.setViewMode(ViewMode.EXTRA_LARGE)
+        assertEquals(ViewMode.EXTRA_LARGE, viewModel.uiState.value.viewMode)
+        assertEquals(ViewMode.EXTRA_LARGE, repository.getViewMode())
+
+        viewModel.setViewMode(ViewMode.DETAILS)
+        assertEquals(ViewMode.DETAILS, viewModel.uiState.value.viewMode)
+        assertEquals(ViewMode.DETAILS, repository.getViewMode())
+
+        viewModel.setViewMode(ViewMode.GRID)
+        assertEquals(ViewMode.GRID, viewModel.uiState.value.viewMode)
+        assertEquals(ViewMode.GRID, repository.getViewMode())
     }
 }
 
