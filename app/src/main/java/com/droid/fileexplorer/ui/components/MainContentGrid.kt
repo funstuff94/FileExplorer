@@ -348,7 +348,7 @@ fun MainContentGrid(
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = if (viewMode == ViewMode.EXTRA_LARGE) 180.dp else 120.dp),
-                contentPadding = PaddingValues(12.dp),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 96.dp),
                 horizontalArrangement = Arrangement.spacedBy(if (viewMode == ViewMode.EXTRA_LARGE) 12.dp else 8.dp),
                 verticalArrangement = Arrangement.spacedBy(if (viewMode == ViewMode.EXTRA_LARGE) 12.dp else 8.dp),
                 modifier = Modifier
