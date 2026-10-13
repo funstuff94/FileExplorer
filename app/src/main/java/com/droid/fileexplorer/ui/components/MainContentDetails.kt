@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -240,6 +242,12 @@ fun MainContentDetails(
             .pointerInput(Unit) {
                 detectPrimaryDragGestures(
                     onDragStart = { offset ->
+                        val containerWidth = containerCoordinates?.size?.width ?: Int.MAX_VALUE
+                        val scrollbarZonePx = with(density) { 24.dp.toPx() }
+                        if (offset.x >= containerWidth - scrollbarZonePx) {
+                            return@detectPrimaryDragGestures
+                        }
+
                         dragStart = offset
                         dragCurrent = offset
 
@@ -349,6 +357,12 @@ fun MainContentDetails(
                 }
             }
         } else {
+            val listState = rememberLazyListState()
+
+            androidx.compose.runtime.LaunchedEffect(currentPath) {
+                listState.scrollToItem(0)
+            }
+
             val dateFormat = remember { SimpleDateFormat("MM/dd/yyyy h:mm a", Locale.getDefault()) }
 
             Column(modifier = Modifier.fillMaxSize()) {
@@ -403,8 +417,14 @@ fun MainContentDetails(
                     color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
                 )
 
-                LazyColumn(
-                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 96.dp),
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    LazyColumn(
+                        state = listState,
+                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                     modifier = Modifier
                         .fillMaxSize()
@@ -767,8 +787,17 @@ fun MainContentDetails(
                         }
                     }
                 }
+
+                val listScrollbarAdapter = rememberLazyListScrollbarAdapter(listState)
+                VerticalScrollbarSlider(
+                    adapter = listScrollbarAdapter,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxHeight()
+                )
             }
         }
+    }
 
         // Marquee Selection Rectangle Overlay
         if (isDraggingSelection && dragStart != null && dragCurrent != null) {

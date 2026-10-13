@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -237,6 +239,12 @@ fun MainContentGrid(
             .pointerInput(Unit) {
                 detectPrimaryDragGestures(
                     onDragStart = { offset ->
+                        val containerWidth = containerCoordinates?.size?.width ?: Int.MAX_VALUE
+                        val scrollbarZonePx = with(density) { 24.dp.toPx() }
+                        if (offset.x >= containerWidth - scrollbarZonePx) {
+                            return@detectPrimaryDragGestures
+                        }
+
                         dragStart = offset
                         dragCurrent = offset
 
@@ -346,7 +354,14 @@ fun MainContentGrid(
                 }
             }
         } else {
+            val gridState = rememberLazyGridState()
+
+            androidx.compose.runtime.LaunchedEffect(currentPath) {
+                gridState.scrollToItem(0)
+            }
+
             LazyVerticalGrid(
+                state = gridState,
                 columns = GridCells.Adaptive(minSize = if (viewMode == ViewMode.EXTRA_LARGE) 180.dp else 120.dp),
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 96.dp),
                 horizontalArrangement = Arrangement.spacedBy(if (viewMode == ViewMode.EXTRA_LARGE) 12.dp else 8.dp),
@@ -420,6 +435,14 @@ fun MainContentGrid(
                     )
                 }
             }
+
+            val gridScrollbarAdapter = rememberLazyGridScrollbarAdapter(gridState)
+            VerticalScrollbarSlider(
+                adapter = gridScrollbarAdapter,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+            )
         }
 
         // Marquee Selection Rectangle Overlay
