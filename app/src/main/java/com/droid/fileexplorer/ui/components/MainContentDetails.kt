@@ -30,6 +30,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.automirrored.filled.NoteAdd
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
@@ -654,7 +655,7 @@ fun MainContentDetails(
                                             text = { Text("Open with") },
                                             leadingIcon = {
                                                 Icon(
-                                                    imageVector = Icons.Default.OpenInNew,
+                                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                                                     contentDescription = null,
                                                     modifier = Modifier.size(18.dp)
                                                 )
@@ -671,56 +672,20 @@ fun MainContentDetails(
                                             }
                                         )
 
-                                        DropdownMenu(
+                                        OpenWithSubmenu(
                                             expanded = showOpenWithSubmenu,
-                                            onDismissRequest = { showOpenWithSubmenu = false }
-                                        ) {
-                                            if (commonApps.isNotEmpty()) {
-                                                commonApps.take(6).forEach { app ->
-                                                    DropdownMenuItem(
-                                                        text = { Text(app.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                                        leadingIcon = {
-                                                            if (app.iconBitmap != null) {
-                                                                Image(
-                                                                    bitmap = app.iconBitmap,
-                                                                    contentDescription = null,
-                                                                    modifier = Modifier.size(20.dp)
-                                                                )
-                                                            } else {
-                                                                Icon(
-                                                                    imageVector = Icons.Default.Apps,
-                                                                    contentDescription = null,
-                                                                    modifier = Modifier.size(20.dp)
-                                                                )
-                                                            }
-                                                        },
-                                                        onClick = {
-                                                            showOpenWithSubmenu = false
-                                                            showContextMenu = false
-                                                            FileOpener.openWithApp(context, item, app)
-                                                        }
-                                                    )
-                                                }
-                                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                            onDismissRequest = { showOpenWithSubmenu = false },
+                                            item = item,
+                                            commonApps = commonApps,
+                                            onSelectApp = { app ->
+                                                showContextMenu = false
+                                                FileOpener.openWithApp(context, item, app)
+                                            },
+                                            onChooseAnotherApp = {
+                                                showContextMenu = false
+                                                onOpenWith(item)
                                             }
-
-                                            DropdownMenuItem(
-                                                text = { Text("Choose another app...") },
-                                                leadingIcon = {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Apps,
-                                                        contentDescription = null,
-                                                        tint = Win11Blue,
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
-                                                },
-                                                onClick = {
-                                                    showOpenWithSubmenu = false
-                                                    showContextMenu = false
-                                                    onOpenWith(item)
-                                                }
-                                            )
-                                        }
+                                        )
                                     }
                                 }
 
