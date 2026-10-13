@@ -361,12 +361,14 @@ fun FileExplorerApp(
             canPin = canPin,
             isPinned = isPinActive,
             canPaste = uiState.canPaste,
+            showVideoThumbnails = uiState.showVideoThumbnails,
             onCut = { viewModel.cutSelected() },
             onCopy = { viewModel.copySelected() },
             onPaste = { viewModel.paste() },
             onTogglePin = { viewModel.togglePinSelected() },
             onViewModeChange = { viewModel.setViewMode(it) },
             onSortChange = { viewModel.setSortOption(it) },
+            onToggleVideoThumbnails = { viewModel.toggleVideoThumbnails() },
             onNewFolder = {
                 newItemTargetFolder = null
                 showNewFolderDialog = true
@@ -587,6 +589,8 @@ fun FileExplorerApp(
                                 },
                                 onShare = { item -> FileOpener.shareFile(context, item) },
                                 onProperties = { item -> propertiesTarget = item },
+                                showVideoThumbnails = uiState.showVideoThumbnails,
+                                onToggleVideoThumbnails = { viewModel.toggleVideoThumbnails() },
                                 onNewFolder = {
                                     newItemTargetFolder = null
                                     showNewFolderDialog = true
@@ -645,6 +649,8 @@ fun FileExplorerApp(
                                 },
                                 onShare = { item -> FileOpener.shareFile(context, item) },
                                 onProperties = { item -> propertiesTarget = item },
+                                showVideoThumbnails = uiState.showVideoThumbnails,
+                                onToggleVideoThumbnails = { viewModel.toggleVideoThumbnails() },
                                 onNewFolder = {
                                     newItemTargetFolder = null
                                     showNewFolderDialog = true

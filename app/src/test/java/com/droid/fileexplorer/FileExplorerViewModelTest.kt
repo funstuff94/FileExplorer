@@ -178,6 +178,12 @@ class FakeFileRepository : FileRepository {
         if (filesMap.values.flatten().any { it.path.trimEnd('/') == clean }) return true
         return false
     }
+
+    private var videoThumbnailsEnabled = true
+    override fun isVideoThumbnailsEnabled(): Boolean = videoThumbnailsEnabled
+    override fun setVideoThumbnailsEnabled(enabled: Boolean) {
+        videoThumbnailsEnabled = enabled
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -833,6 +839,33 @@ class FileExplorerViewModelTest {
         assertEquals(grantedMtpUri, state.currentPath)
         assertEquals(grantedMtpUri, state.currentTreeUri)
         assertEquals(2, state.items.size)
+    }
+
+    @Test
+    fun testToggleVideoThumbnails_togglesStateAndPersists() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.showVideoThumbnails)
+        assertTrue(repository.isVideoThumbnailsEnabled())
+
+        viewModel.toggleVideoThumbnails()
+        assertFalse(viewModel.uiState.value.showVideoThumbnails)
+        assertFalse(repository.isVideoThumbnailsEnabled())
+
+        viewModel.toggleVideoThumbnails()
+        assertTrue(viewModel.uiState.value.showVideoThumbnails)
+        assertTrue(repository.isVideoThumbnailsEnabled())
+    }
+
+    @Test
+    fun testSetShowVideoThumbnails_setsExplicitState() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        viewModel.setShowVideoThumbnails(false)
+        assertFalse(viewModel.uiState.value.showVideoThumbnails)
+        assertFalse(repository.isVideoThumbnailsEnabled())
+
+        viewModel.setShowVideoThumbnails(true)
+        assertTrue(viewModel.uiState.value.showVideoThumbnails)
+        assertTrue(repository.isVideoThumbnailsEnabled())
     }
 }
 

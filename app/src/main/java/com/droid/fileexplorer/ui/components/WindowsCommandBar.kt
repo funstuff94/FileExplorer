@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.DividerDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -69,12 +71,14 @@ fun WindowsCommandBar(
     canPin: Boolean,
     isPinned: Boolean,
     canPaste: Boolean,
+    showVideoThumbnails: Boolean = true,
     onCut: () -> Unit,
     onCopy: () -> Unit,
     onPaste: () -> Unit,
     onTogglePin: () -> Unit,
     onViewModeChange: (ViewMode) -> Unit,
     onSortChange: (SortOption) -> Unit,
+    onToggleVideoThumbnails: () -> Unit = {},
     onNewFolder: () -> Unit,
     onNewFile: () -> Unit,
     onOpenNewWindow: () -> Unit = {},
@@ -353,7 +357,43 @@ fun WindowsCommandBar(
                             onViewModeChange(ViewMode.DETAILS)
                         }
                     )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    DropdownMenuItem(
+                        text = { Text(if (showVideoThumbnails) "Hide video thumbnails" else "Show video thumbnails") },
+                        leadingIcon = {
+                            if (showVideoThumbnails) Icon(Icons.Default.Check, contentDescription = null, tint = Win11Blue)
+                            else Icon(Icons.Default.VideocamOff, contentDescription = null)
+                        },
+                        onClick = {
+                            showViewMenu = false
+                            onToggleVideoThumbnails()
+                        }
+                    )
                 }
+            }
+
+            VerticalDivider(modifier = Modifier.height(20.dp).padding(horizontal = 4.dp))
+
+            // Video Thumbnails Toggle Button
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable { onToggleVideoThumbnails() }
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+            ) {
+                Icon(
+                    imageVector = if (showVideoThumbnails) Icons.Default.Videocam else Icons.Default.VideocamOff,
+                    contentDescription = if (showVideoThumbnails) "Hide video thumbnails" else "Show video thumbnails",
+                    tint = if (showVideoThumbnails) Win11Blue else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "Video preview",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (showVideoThumbnails) Win11Blue else MaterialTheme.colorScheme.onSurface
+                )
             }
 
             Spacer(modifier = Modifier.weight(1f))

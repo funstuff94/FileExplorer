@@ -1,9 +1,14 @@
 package com.droid.fileexplorer.ui.components
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
@@ -15,27 +20,111 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.NorthEast
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.droid.fileexplorer.model.FileCategory
 import com.droid.fileexplorer.model.FileItem
 import com.droid.fileexplorer.theme.Win11Blue
 import com.droid.fileexplorer.theme.Win11FolderYellow
+import com.droid.fileexplorer.util.VideoThumbnailLoader
 
 @Composable
 fun FileTypeIcon(
     item: FileItem,
     size: Dp = 40.dp,
+    showVideoThumbnail: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val isFolder = item.isDirectory || (item.isShortcut && item.shortcutTargetIsDirectory)
+    val isVideo = item.category == FileCategory.VIDEO && !isFolder
+
+    // Video Thumbnail Loader
+    if (isVideo && showVideoThumbnail) {
+        val context = LocalContext.current
+        val cachedBmp = VideoThumbnailLoader.getCached(item.path)
+        val bitmapState = produceState<Bitmap?>(initialValue = cachedBmp, key1 = item.path) {
+            if (value == null) {
+                value = VideoThumbnailLoader.loadThumbnail(context, item)
+            }
+        }
+
+        val bmp = bitmapState.value
+        if (bmp != null) {
+            Box(
+                modifier = modifier.size(size),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(size)
+                        .clip(RoundedCornerShape(if (size < 30.dp) 4.dp else 6.dp))
+                        .background(Color.Black)
+                        .border(0.5.dp, Color(0x33FFFFFF), RoundedCornerShape(if (size < 30.dp) 4.dp else 6.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = item.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Small Windows 11 Video Badge overlay
+                    if (size >= 32.dp) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(2.dp)
+                                .size(size * 0.36f)
+                                .clip(CircleShape)
+                                .background(Color(0xAA000000)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(size * 0.26f)
+                            )
+                        }
+                    }
+                }
+
+                if (item.isShortcut) {
+                    // Windows 11 Shortcut Arrow Badge
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .size(size * 0.44f)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(Color.White)
+                            .border(0.5.dp, Color(0xFFCCCCCC), RoundedCornerShape(3.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.NorthEast,
+                            contentDescription = "Shortcut",
+                            tint = Win11Blue,
+                            modifier = Modifier.size(size * 0.32f)
+                        )
+                    }
+                }
+            }
+            return
+        }
+    }
 
     val (icon, tint, bgColor) = when {
         isFolder -> Triple(Icons.Default.Folder, Win11FolderYellow, Color.Transparent)

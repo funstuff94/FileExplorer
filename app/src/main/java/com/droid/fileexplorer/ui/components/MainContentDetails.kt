@@ -44,6 +44,8 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tab
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -122,6 +124,8 @@ fun MainContentDetails(
     onDelete: (FileItem) -> Unit,
     onShare: (FileItem) -> Unit,
     onProperties: (FileItem) -> Unit,
+    showVideoThumbnails: Boolean = true,
+    onToggleVideoThumbnails: () -> Unit = {},
     onNewFolder: () -> Unit = {},
     onNewFile: () -> Unit = {},
     onNewFolderIn: (FileItem) -> Unit = {},
@@ -501,7 +505,7 @@ fun MainContentDetails(
                                                 }
                                             }
                                         ) {
-                                            FileTypeIcon(item = item, size = 22.dp)
+                                            FileTypeIcon(item = item, size = 22.dp, showVideoThumbnail = showVideoThumbnails)
                                         }
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
@@ -723,6 +727,23 @@ fun MainContentDetails(
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                                 DropdownMenuItem(
+                                    text = { Text(if (showVideoThumbnails) "Hide video thumbnails" else "Show video thumbnails") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = if (showVideoThumbnails) Icons.Default.VideocamOff else Icons.Default.Videocam,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    },
+                                    onClick = {
+                                        showContextMenu = false
+                                        onToggleVideoThumbnails()
+                                    }
+                                )
+
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                                DropdownMenuItem(
                                     text = { Text("Properties") },
                                     leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp)) },
                                     onClick = {
@@ -839,6 +860,22 @@ fun MainContentDetails(
                 onClick = {
                     showBackgroundMenu = false
                     onBackgroundPaste()
+                }
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            DropdownMenuItem(
+                text = { Text(if (showVideoThumbnails) "Hide video thumbnails" else "Show video thumbnails") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = if (showVideoThumbnails) Icons.Default.VideocamOff else Icons.Default.Videocam,
+                        contentDescription = null,
+                        tint = Win11Blue,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                onClick = {
+                    showBackgroundMenu = false
+                    onToggleVideoThumbnails()
                 }
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))

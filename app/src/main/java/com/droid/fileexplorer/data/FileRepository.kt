@@ -40,4 +40,6 @@ interface FileRepository {
     suspend fun getPersistedTreeUriForPath(path: String): String? = null
     suspend fun saveVolumeTreeUri(pathOrUuid: String, treeUri: String) {}
     suspend fun exists(path: String, treeUri: String? = null): Boolean = true
+    fun isVideoThumbnailsEnabled(): Boolean = true
+    fun setVideoThumbnailsEnabled(enabled: Boolean) {}
 }

@@ -46,6 +46,8 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tab
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -120,6 +122,8 @@ fun MainContentGrid(
     onDelete: (FileItem) -> Unit,
     onShare: (FileItem) -> Unit,
     onProperties: (FileItem) -> Unit,
+    showVideoThumbnails: Boolean = true,
+    onToggleVideoThumbnails: () -> Unit = {},
     onNewFolder: () -> Unit = {},
     onNewFile: () -> Unit = {},
     onNewFolderIn: (FileItem) -> Unit = {},
@@ -398,6 +402,8 @@ fun MainContentGrid(
                         onDelete = { onDelete(item) },
                         onShare = { onShare(item) },
                         onProperties = { onProperties(item) },
+                        showVideoThumbnails = showVideoThumbnails,
+                        onToggleVideoThumbnails = onToggleVideoThumbnails,
                         onContextMenu = {
                             if (!selectedPaths.contains(item.path)) {
                                 onSelectionChange(setOf(item.path))
@@ -516,6 +522,22 @@ fun MainContentGrid(
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             DropdownMenuItem(
+                text = { Text(if (showVideoThumbnails) "Hide video thumbnails" else "Show video thumbnails") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = if (showVideoThumbnails) Icons.Default.VideocamOff else Icons.Default.Videocam,
+                        contentDescription = null,
+                        tint = Win11Blue,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                onClick = {
+                    showBackgroundMenu = false
+                    onToggleVideoThumbnails()
+                }
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            DropdownMenuItem(
                 text = { Text("Refresh") },
                 leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
                 onClick = {
@@ -552,6 +574,8 @@ private fun GridItemCard(
     onDelete: () -> Unit,
     onShare: () -> Unit,
     onProperties: () -> Unit,
+    showVideoThumbnails: Boolean = true,
+    onToggleVideoThumbnails: () -> Unit = {},
     onContextMenu: (() -> Unit)? = null,
     onNewFolderIn: (FileItem) -> Unit = {},
     onNewFileIn: (FileItem) -> Unit = {}
@@ -664,7 +688,7 @@ private fun GridItemCard(
 
                 // File/Folder Icon
                 Box(modifier = Modifier.onGloballyPositioned(onIconPositioned)) {
-                    FileTypeIcon(item = item, size = 44.dp)
+                    FileTypeIcon(item = item, size = 44.dp, showVideoThumbnail = showVideoThumbnails)
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -836,6 +860,23 @@ private fun GridItemCard(
                 onClick = {
                     showContextMenu = false
                     onDelete()
+                }
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            DropdownMenuItem(
+                text = { Text(if (showVideoThumbnails) "Hide video thumbnails" else "Show video thumbnails") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = if (showVideoThumbnails) Icons.Default.VideocamOff else Icons.Default.Videocam,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                onClick = {
+                    showContextMenu = false
+                    onToggleVideoThumbnails()
                 }
             )
 

@@ -56,7 +56,8 @@ data class ExplorerUiState(
     val volumeAccessPath: String = "",
     val isReadOnlyVolume: Boolean = false,
     val readOnlyVolumeName: String = "",
-    val readOnlyVolumePath: String = ""
+    val readOnlyVolumePath: String = "",
+    val showVideoThumbnails: Boolean = true
 ) {
     val selectedDirectories: List<FileItem>
         get() = filteredItems.filter { selectedItemPaths.contains(it.path) && it.isDirectory }
@@ -91,6 +92,8 @@ class FileExplorerViewModel(
     private var pendingNavigation: NavigationEntry? = null
 
     init {
+        val initialThumbnails = repository.isVideoThumbnailsEnabled()
+        _uiState.update { it.copy(showVideoThumbnails = initialThumbnails) }
         loadInitialData()
         observeSharedState()
     }
@@ -559,6 +562,17 @@ class FileExplorerViewModel(
 
     fun setViewMode(mode: ViewMode) {
         _uiState.update { it.copy(viewMode = mode) }
+    }
+
+    fun toggleVideoThumbnails() {
+        val next = !_uiState.value.showVideoThumbnails
+        repository.setVideoThumbnailsEnabled(next)
+        _uiState.update { it.copy(showVideoThumbnails = next) }
+    }
+
+    fun setShowVideoThumbnails(enabled: Boolean) {
+        repository.setVideoThumbnailsEnabled(enabled)
+        _uiState.update { it.copy(showVideoThumbnails = enabled) }
     }
 
     fun toggleSelect(path: String) {

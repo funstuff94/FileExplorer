@@ -1710,4 +1710,12 @@ class DefaultFileRepository(
         if (persistedUri != null) return@withContext true
         false
     }
+
+    override fun isVideoThumbnailsEnabled(): Boolean {
+        return prefs.getBoolean("show_video_thumbnails", true)
+    }
+
+    override fun setVideoThumbnailsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("show_video_thumbnails", enabled).apply()
+    }
 }
