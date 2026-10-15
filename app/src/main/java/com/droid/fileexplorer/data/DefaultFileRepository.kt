@@ -400,6 +400,9 @@ class DefaultFileRepository(
         if (primaryDir.exists()) {
             val (total, free) = getSpaceInfo(primaryDir.absolutePath)
             addedPaths.add(primaryDir.absolutePath)
+            addedPaths.add("/storage/emulated/10")
+            addedPaths.add("/storage/emulated/0")
+            Environment.getExternalStorageDirectory()?.absolutePath?.let { addedPaths.add(it) }
             drives.add(
                 DriveItem(
                     id = "internal",
@@ -436,11 +439,18 @@ class DefaultFileRepository(
         if (storageManager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try {
                 for (volume in storageManager.storageVolumes) {
+                    // MUST be a secondary, removable, non-emulated physical volume
                     if (volume.isPrimary) continue
+                    if (!volume.isRemovable) continue
+                    if (volume.isEmulated) continue
+
+                    // In Android, removable media ALWAYS has a non-null filesystem UUID (e.g. ABCD-1234)
+                    val uuid = volume.uuid ?: continue
+                    if (uuid.isBlank() || uuid.equals("null", ignoreCase = true)) continue
+
                     val state = volume.state
                     if (state != Environment.MEDIA_MOUNTED && state != Environment.MEDIA_MOUNTED_READ_ONLY) continue
 
-                    val desc = volume.getDescription(context) ?: "External Drive"
                     val volumeDir: File? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         volume.directory
                     } else {
@@ -454,15 +464,17 @@ class DefaultFileRepository(
                         }
                     }
 
-                    val rawPath = volumeDir?.absolutePath
-                        ?: (if (volume.uuid != null) "/storage/${volume.uuid}" else continue)
-                    val path = if (volume.uuid != null) {
-                        "/storage/${volume.uuid}"
-                    } else if (rawPath.startsWith("/mnt/media_rw/")) {
+                    val rawPath = volumeDir?.absolutePath ?: "/storage/$uuid"
+                    val path = if (rawPath.startsWith("/mnt/media_rw/")) {
                         "/storage/" + rawPath.substringAfter("/mnt/media_rw/")
                     } else {
                         rawPath
                     }
+
+                    // Forbid any internal emulated paths from being treated as external drives
+                    if (path.startsWith("/storage/emulated") || rawPath.startsWith("/storage/emulated")) continue
+                    if (addedPaths.contains(path) || addedPaths.contains(rawPath) || addedPaths.contains("/storage/$uuid")) continue
+
                     val dirFile = File(path)
                     val rawDirFile = File(rawPath)
                     if (!dirFile.exists() && !rawDirFile.exists()) continue
@@ -471,22 +483,26 @@ class DefaultFileRepository(
                     val (total2, free2) = getSpaceInfo(rawPath)
                     val total = if (total1 > 0L) total1 else total2
                     val free = if (total1 > 0L) free1 else free2
-                    if (total <= 0L && !dirFile.canRead() && !rawDirFile.canRead()) continue
+
+                    // CRITICAL: A real mounted external drive MUST have a positive capacity!
+                    if (total <= 0L) continue
 
                     addedPaths.add(path)
                     if (rawPath != path) addedPaths.add(rawPath)
+                    addedPaths.add("/storage/$uuid")
 
+                    val desc = volume.getDescription(context)?.takeIf { it.isNotBlank() } ?: "External Drive"
                     val isUsb = desc.contains("usb", ignoreCase = true) ||
                         desc.contains("drive", ignoreCase = true) ||
                         desc.contains("ssd", ignoreCase = true) ||
                         desc.contains("flash", ignoreCase = true) ||
                         path.contains("usb", ignoreCase = true)
                     val letter = (driveLetterCode++).toChar()
-                    val treeUri = getPersistedTreeUriForVolume(volume.uuid, path)
+                    val treeUri = getPersistedTreeUriForVolume(uuid, path)
 
                     drives.add(
                         DriveItem(
-                            id = "vol_${volume.uuid ?: path.hashCode().toString()}",
+                            id = "vol_$uuid",
                             name = "$desc ($letter:)",
                             path = path,
                             totalBytes = total,
@@ -508,17 +524,19 @@ class DefaultFileRepository(
                 if (fullPath.startsWith("/storage/") && !fullPath.startsWith("/storage/emulated/")) {
                     val parts = fullPath.split("/")
                     if (parts.size >= 3) {
-                        val rootVolumePath = "/storage/${parts[2]}"
+                        val volumeId = parts[2]
+                        if (volumeId == "emulated" || volumeId == "self" || volumeId == "knox") continue
+                        val rootVolumePath = "/storage/$volumeId"
                         val rootDir = File(rootVolumePath)
-                        if (rootDir.exists() && rootDir.canRead() && !addedPaths.contains(rootVolumePath)) {
+                        if (rootDir.exists() && rootDir.isDirectory && rootDir.canRead() && !addedPaths.contains(rootVolumePath)) {
                             val (total, free) = getSpaceInfo(rootVolumePath)
                             if (total > 0L) {
                                 addedPaths.add(rootVolumePath)
                                 val letter = (driveLetterCode++).toChar()
-                                val treeUri = getPersistedTreeUriForVolume(parts[2], rootVolumePath)
+                                val treeUri = getPersistedTreeUriForVolume(volumeId, rootVolumePath)
                                 drives.add(
                                     DriveItem(
-                                        id = "ext_${parts[2]}",
+                                        id = "ext_$volumeId",
                                         name = "USB Drive ($letter:)",
                                         path = rootVolumePath,
                                         totalBytes = total,
@@ -539,7 +557,7 @@ class DefaultFileRepository(
         if (storageRoot.exists() && storageRoot.isDirectory) {
             val subDirs = storageRoot.listFiles() ?: emptyArray()
             for (sub in subDirs) {
-                if (sub.name != "emulated" && sub.name != "self" && sub.name != "knox" && !addedPaths.contains(sub.absolutePath)) {
+                if (sub.name != "emulated" && sub.name != "self" && sub.name != "knox" && !sub.name.startsWith("emulated") && !addedPaths.contains(sub.absolutePath)) {
                     if (!sub.isDirectory || !sub.canRead()) continue
                     val (total, free) = getSpaceInfo(sub.absolutePath)
                     // MUST have actual non-zero capacity to be considered a mounted filesystem
@@ -567,6 +585,19 @@ class DefaultFileRepository(
         // 6. Connected Android Smartphones (via USB Host and MTP DocumentsProvider)
         detectConnectedSmartphones(drives, addedPaths, driveLetterCode.toChar())
 
+        // 7. Write diagnostic info for troubleshooting
+        try {
+            val debugFile = File("/storage/emulated/10/Apps/FileExplorer/drives_scan.log")
+            val content = buildString {
+                appendLine("=== Drive Scan at ${System.currentTimeMillis()} ===")
+                appendLine("Total drives found: ${drives.size}")
+                drives.forEach { d ->
+                    appendLine(" - [${d.id}] name='${d.name}', path='${d.path}', total=${d.totalBytes}, type=${d.type}")
+                }
+            }
+            debugFile.writeText(content)
+        } catch (_: Exception) {}
+
         drives
     }
 
@@ -575,105 +606,44 @@ class DefaultFileRepository(
         addedPaths: MutableSet<String>,
         startDriveLetter: Char
     ): Char {
-        // 1. Scan UsbManager first for physically connected smartphones (Google Pixel, Samsung Galaxy, etc.)
-        val connectedPhones = mutableListOf<Triple<String, String, Int>>() // phonePath, prettyName, deviceId
+        // 1. Scan UsbManager for physically connected devices with an actual MTP / PTP interface.
+        // NOTE: We do NOT match generic vendor IDs (like Lenovo, Google, Samsung) or keywords,
+        // because laptops have internal webcams, trackpads, keyboards, and Bluetooth chips on USB.
+        var hasMtpDevice = false
+        var mtpDeviceName: String? = null
         try {
             val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
             if (usbManager != null) {
-                val knownPhoneVendors = setOf(
-                    0x18d1, // Google
-                    0x04e8, // Samsung
-                    0x2717, // Xiaomi
-                    0x22d9, // OnePlus / Oppo
-                    0x12d1, // Huawei
-                    0x22b8, // Motorola
-                    0x0fce, // Sony
-                    0x1004, // LG
-                    0x0bb4, // HTC
-                    0x2d95, // Vivo
-                    0x0b05, // Asus
-                    0x17ef  // Lenovo
-                )
-                val phoneKeywords = listOf("phone", "pixel", "galaxy", "android", "redmi", "mi ", "xiaomi", "oneplus", "xperia", "moto", "huawei", "honor", "oppo", "vivo", "realme")
-
                 for ((_, device) in usbManager.deviceList) {
-                    val prod = (device.productName ?: "").lowercase()
-                    val manu = (device.manufacturerName ?: "").lowercase()
-                    var isMtpInterface = false
                     for (i in 0 until device.interfaceCount) {
                         val intf = device.getInterface(i)
-                        if ((intf.interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE && intf.interfaceSubclass == 1) ||
-                            (intf.interfaceClass == 255 && intf.interfaceSubclass == 255 && intf.interfaceProtocol == 0)
-                        ) {
-                            isMtpInterface = true
+                        val isPtpMtp = (intf.interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE && intf.interfaceSubclass == 1 && intf.interfaceProtocol == 1)
+                        val isAndroidMtp = (intf.interfaceClass == 255 && intf.interfaceSubclass == 255 && intf.interfaceProtocol == 0)
+                        if (isPtpMtp || isAndroidMtp) {
+                            hasMtpDevice = true
+                            mtpDeviceName = when {
+                                !device.productName.isNullOrBlank() -> device.productName
+                                !device.manufacturerName.isNullOrBlank() -> "${device.manufacturerName} Smartphone"
+                                else -> "Android Smartphone"
+                            }
                             break
                         }
                     }
-
-                    val isPhone = isMtpInterface ||
-                        knownPhoneVendors.contains(device.vendorId) ||
-                        phoneKeywords.any { prod.contains(it) || manu.contains(it) }
-
-                    if (isPhone) {
-                        val prettyName = when {
-                            !device.productName.isNullOrBlank() -> device.productName!!
-                            !device.manufacturerName.isNullOrBlank() -> "${device.manufacturerName} Smartphone"
-                            else -> "Android Smartphone"
-                        }
-                        connectedPhones.add(Triple("mtp://${device.deviceId}", prettyName, device.deviceId))
-                    }
+                    if (hasMtpDevice) break
                 }
             }
         } catch (_: Exception) {}
 
-        // CRITICAL GUARD: If no smartphone is physically connected to USB, do NOT add any phantom smartphone!
-        if (connectedPhones.isEmpty()) {
+        // CRITICAL GUARD: If no device with an active MTP interface is physically attached,
+        // do NOT query MTP document roots or persisted permissions. Prevents phantom smartphone drives!
+        if (!hasMtpDevice) {
             return startDriveLetter
         }
 
         var currentLetter = startDriveLetter
-        val primaryPhoneName = connectedPhones.firstOrNull()?.second
+        val phoneLabel = mtpDeviceName ?: "Android Smartphone"
 
-        // 2. Check Android ContentResolver's persistedUriPermissions for MTP smartphones
-        try {
-            val perms = context.contentResolver.persistedUriPermissions
-            for (perm in perms) {
-                if (!perm.isReadPermission) continue
-                val uriStr = perm.uri.toString()
-                if (uriStr.contains("com.android.mtp.documents")) {
-                    val rootDoc = try { DocumentFile.fromTreeUri(context, perm.uri) } catch (_: Exception) { null }
-                    val isAccessible = try { rootDoc != null && rootDoc.exists() && rootDoc.canRead() } catch (_: Exception) { false }
-                    if (!isAccessible) continue
-
-                    val rawTitle = rootDoc?.name?.takeIf { it.isNotBlank() } ?: "Android Smartphone"
-                    val phoneTitle = if (primaryPhoneName != null && (rawTitle == "Android Smartphone" || rawTitle.contains("Internal", ignoreCase = true) || rawTitle.contains("storage", ignoreCase = true))) {
-                        "$primaryPhoneName ($rawTitle)"
-                    } else if (primaryPhoneName != null && !rawTitle.contains(primaryPhoneName, ignoreCase = true)) {
-                        "$primaryPhoneName - $rawTitle"
-                    } else {
-                        rawTitle
-                    }
-
-                    if (!addedPaths.contains(uriStr)) {
-                        addedPaths.add(uriStr)
-                        val letter = currentLetter++
-                        drives.add(
-                            DriveItem(
-                                id = "mtp_perm_${uriStr.hashCode()}",
-                                name = "$phoneTitle ($letter:)",
-                                path = uriStr,
-                                totalBytes = 0L,
-                                freeBytes = 0L,
-                                type = DriveType.SMARTPHONE,
-                                treeUri = uriStr
-                            )
-                        )
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
-        // 3. Query com.android.mtp.documents roots if accessible
+        // 2. Query com.android.mtp.documents roots if accessible
         try {
             val rootsUri = DocumentsContract.buildRootsUri("com.android.mtp.documents")
             context.contentResolver.query(rootsUri, null, null, null, null)?.use { cursor ->
@@ -682,19 +652,23 @@ class DefaultFileRepository(
                 val availCol = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES)
                 val capCol = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_CAPACITY_BYTES)
                 while (cursor.moveToNext()) {
-                    val rawTitle = if (titleCol != -1) cursor.getString(titleCol) else "Android Smartphone"
-                    val title = if (primaryPhoneName != null && !rawTitle.contains(primaryPhoneName, ignoreCase = true)) {
-                        "$primaryPhoneName - $rawTitle"
-                    } else rawTitle
+                    val rawTitle = if (titleCol != -1) cursor.getString(titleCol) else "Internal storage"
+                    val title = if (rawTitle.equals("Internal storage", ignoreCase = true) || rawTitle.equals("Internal shared storage", ignoreCase = true)) {
+                        "$phoneLabel ($rawTitle)"
+                    } else if (!rawTitle.contains(phoneLabel, ignoreCase = true)) {
+                        "$phoneLabel - $rawTitle"
+                    } else {
+                        rawTitle
+                    }
                     val docId = if (docIdCol != -1) cursor.getString(docIdCol) else null
                     val avail = if (availCol != -1) cursor.getLong(availCol) else 0L
                     val cap = if (capCol != -1) cursor.getLong(capCol) else 0L
                     val treeUri = if (docId != null) {
                         DocumentsContract.buildTreeDocumentUri("com.android.mtp.documents", docId).toString()
                     } else null
-                    val path = treeUri ?: "mtp://phone"
+                    val path = treeUri ?: continue // If no valid document URI, cannot browse!
 
-                    val existing = drives.firstOrNull { it.type == DriveType.SMARTPHONE && (it.path == path || (treeUri != null && it.treeUri == treeUri)) }
+                    val existing = drives.firstOrNull { it.type == DriveType.SMARTPHONE && (it.path == path || it.treeUri == treeUri) }
                     if (existing != null) {
                         if (cap > 0L) {
                             val idx = drives.indexOf(existing)
@@ -719,27 +693,44 @@ class DefaultFileRepository(
             }
         } catch (_: Exception) {}
 
-        // 4. If no MTP drive with granted permissions exists yet, add connected phone from UsbManager
-        for ((phonePath, prettyName, deviceId) in connectedPhones) {
-            val alreadyAdded = drives.any { it.type == DriveType.SMARTPHONE }
-            if (!alreadyAdded && !addedPaths.contains(phonePath)) {
-                val savedTreeUri = getPersistedTreeUriForVolume("phone_$deviceId", phonePath)
-                    ?: getPersistedTreeUriForVolume(null, "mtp")
-                val letter = currentLetter++
-                addedPaths.add(phonePath)
-                drives.add(
-                    DriveItem(
-                        id = "phone_$deviceId",
-                        name = "$prettyName ($letter:)",
-                        path = savedTreeUri ?: phonePath,
-                        totalBytes = 0L,
-                        freeBytes = 0L,
-                        type = DriveType.SMARTPHONE,
-                        treeUri = savedTreeUri
+        // 3. Check Android ContentResolver's persistedUriPermissions for MTP smartphones
+        try {
+            val perms = context.contentResolver.persistedUriPermissions
+            for (perm in perms) {
+                if (!perm.isReadPermission) continue
+                val uriStr = perm.uri.toString()
+                if (uriStr.contains("com.android.mtp.documents") && !addedPaths.contains(uriStr)) {
+                    val rootDoc = try { DocumentFile.fromTreeUri(context, perm.uri) } catch (_: Exception) { null }
+                    // Actually attempt to verify directory accessibility.
+                    // If the device is disconnected, listFiles() returns null or throws.
+                    val files = try { rootDoc?.listFiles() } catch (_: Exception) { null }
+                    if (files == null) continue
+
+                    val rawTitle = rootDoc?.name?.takeIf { it.isNotBlank() } ?: "Android Smartphone"
+                    val displayName = if (rawTitle.equals("Internal storage", ignoreCase = true) || rawTitle.equals("Internal shared storage", ignoreCase = true)) {
+                        "$phoneLabel ($rawTitle)"
+                    } else if (!rawTitle.contains(phoneLabel, ignoreCase = true)) {
+                        "$phoneLabel - $rawTitle"
+                    } else {
+                        rawTitle
+                    }
+
+                    addedPaths.add(uriStr)
+                    val letter = currentLetter++
+                    drives.add(
+                        DriveItem(
+                            id = "mtp_perm_${uriStr.hashCode()}",
+                            name = "$displayName ($letter:)",
+                            path = uriStr,
+                            totalBytes = 0L,
+                            freeBytes = 0L,
+                            type = DriveType.SMARTPHONE,
+                            treeUri = uriStr
+                        )
                     )
-                )
+                }
             }
-        }
+        } catch (_: Exception) {}
 
         return currentLetter
     }
