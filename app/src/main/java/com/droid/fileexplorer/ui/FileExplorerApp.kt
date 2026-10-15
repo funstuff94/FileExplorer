@@ -122,14 +122,22 @@ fun FileExplorerApp(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.onPermissionResult(checkPermission())
-                viewModel.refreshDrives()
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    viewModel.onPermissionResult(checkPermission())
+                    viewModel.refreshDrives()
+                    viewModel.startDeviceMonitoring()
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    viewModel.stopDeviceMonitoring()
+                }
+                else -> {}
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.stopDeviceMonitoring()
         }
     }
 
@@ -431,7 +439,8 @@ fun FileExplorerApp(
                 onPinCurrentFolder = { viewModel.togglePinCurrentDirectory() },
                 onUnpin = { path -> viewModel.unpinDirectory(path) },
                 onAddCloudDrive = { openDocumentTreeLauncher.launch(null) },
-                onRemoveCloudDrive = { uri -> viewModel.removeCloudDrive(uri) }
+                onRemoveCloudDrive = { uri -> viewModel.removeCloudDrive(uri) },
+                onRefreshDrives = { viewModel.refreshDrives() }
             )
 
             // Right-Hand Main Explorer Area

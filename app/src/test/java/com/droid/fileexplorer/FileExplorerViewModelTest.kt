@@ -891,5 +891,74 @@ class FileExplorerViewModelTest {
         assertEquals(ViewMode.GRID, viewModel.uiState.value.viewMode)
         assertEquals(ViewMode.GRID, repository.getViewMode())
     }
+
+    @Test
+    fun testRefreshDrives_updatesDrivesInUiState() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        assertEquals(2, viewModel.uiState.value.drives.size)
+
+        // Simulate connecting a USB drive
+        val usbDrive = DriveItem("usb1", "USB Drive (D:)", "/storage/ABCD-1234", 16_000_000_000L, 8_000_000_000L, DriveType.USB)
+        repository.drives.add(usbDrive)
+
+        viewModel.refreshDrives()
+        advanceUntilIdle()
+
+        assertEquals(3, viewModel.uiState.value.drives.size)
+        assertTrue(viewModel.uiState.value.drives.any { it.id == "usb1" })
+
+        // Simulate disconnecting the USB drive
+        repository.drives.remove(usbDrive)
+        viewModel.refreshDrives()
+        advanceUntilIdle()
+
+        assertEquals(2, viewModel.uiState.value.drives.size)
+        assertFalse(viewModel.uiState.value.drives.any { it.id == "usb1" })
+    }
+
+    @Test
+    fun testRefreshDrives_whenExternalDriveDisconnected_navigatesBackToInternal() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val usbDrive = DriveItem("usb1", "USB Drive (D:)", "/storage/ABCD-1234", 16_000_000_000L, 8_000_000_000L, DriveType.USB, treeUri = "content://usb")
+        repository.drives.add(usbDrive)
+        repository.filesMap["/storage/ABCD-1234"] = mutableListOf(
+            FileItem("doc", "notes.txt", "/storage/ABCD-1234/notes.txt", isDirectory = false)
+        )
+
+        // Navigate to the USB drive
+        viewModel.navigateTo("/storage/ABCD-1234", "content://usb")
+        advanceUntilIdle()
+        assertEquals("/storage/ABCD-1234", viewModel.uiState.value.currentPath)
+
+        // Disconnect USB drive
+        repository.drives.remove(usbDrive)
+        viewModel.refreshDrives()
+        advanceUntilIdle()
+
+        // Should automatically fall back to internal storage
+        assertEquals("/storage/emulated/10", viewModel.uiState.value.currentPath)
+    }
+
+    @Test
+    fun testDeviceMonitoring_detectsConnectedAndDisconnectedDrives() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        viewModel.startDeviceMonitoring()
+
+        val usbDrive = DriveItem("usb2", "Flash Drive (E:)", "/storage/5678-EFGH", 32_000_000_000L, 16_000_000_000L, DriveType.USB)
+        repository.drives.add(usbDrive)
+
+        // Advance coroutine delay (1500ms)
+        testScheduler.advanceTimeBy(1600)
+        testScheduler.runCurrent()
+
+        assertTrue(viewModel.uiState.value.drives.any { it.id == "usb2" })
+
+        repository.drives.remove(usbDrive)
+        testScheduler.advanceTimeBy(1600)
+        testScheduler.runCurrent()
+
+        assertFalse(viewModel.uiState.value.drives.any { it.id == "usb2" })
+        viewModel.stopDeviceMonitoring()
+    }
 }
 

@@ -32,7 +32,13 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_INITIAL_TREE_URI = "EXTRA_INITIAL_TREE_URI"
     }
 
-    private val deviceChangeReceiver = object : BroadcastReceiver() {
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            viewModel.refreshDrives()
+        }
+    }
+
+    private val mediaReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             viewModel.refreshDrives()
         }
@@ -75,7 +81,7 @@ class MainActivity : ComponentActivity() {
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
-        val mediaFilter = IntentFilter().apply {
+        val mediaFilterWithScheme = IntentFilter().apply {
             addAction(Intent.ACTION_MEDIA_MOUNTED)
             addAction(Intent.ACTION_MEDIA_UNMOUNTED)
             addAction(Intent.ACTION_MEDIA_REMOVED)
@@ -83,19 +89,30 @@ class MainActivity : ComponentActivity() {
             addAction(Intent.ACTION_MEDIA_BAD_REMOVAL)
             addDataScheme("file")
         }
+        val mediaFilterNoScheme = IntentFilter().apply {
+            addAction(Intent.ACTION_MEDIA_MOUNTED)
+            addAction(Intent.ACTION_MEDIA_UNMOUNTED)
+            addAction(Intent.ACTION_MEDIA_REMOVED)
+            addAction(Intent.ACTION_MEDIA_EJECT)
+            addAction(Intent.ACTION_MEDIA_BAD_REMOVAL)
+        }
+
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(deviceChangeReceiver, usbFilter, Context.RECEIVER_EXPORTED)
-                registerReceiver(deviceChangeReceiver, mediaFilter, Context.RECEIVER_EXPORTED)
+                registerReceiver(usbReceiver, usbFilter, Context.RECEIVER_EXPORTED)
+                registerReceiver(mediaReceiver, mediaFilterWithScheme, Context.RECEIVER_EXPORTED)
+                registerReceiver(mediaReceiver, mediaFilterNoScheme, Context.RECEIVER_EXPORTED)
             } else {
-                registerReceiver(deviceChangeReceiver, usbFilter)
-                registerReceiver(deviceChangeReceiver, mediaFilter)
+                registerReceiver(usbReceiver, usbFilter)
+                registerReceiver(mediaReceiver, mediaFilterWithScheme)
+                registerReceiver(mediaReceiver, mediaFilterNoScheme)
             }
         } catch (_: Exception) {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    registerReceiver(deviceChangeReceiver, usbFilter, Context.RECEIVER_NOT_EXPORTED)
-                    registerReceiver(deviceChangeReceiver, mediaFilter, Context.RECEIVER_NOT_EXPORTED)
+                    registerReceiver(usbReceiver, usbFilter, Context.RECEIVER_NOT_EXPORTED)
+                    registerReceiver(mediaReceiver, mediaFilterWithScheme, Context.RECEIVER_NOT_EXPORTED)
+                    registerReceiver(mediaReceiver, mediaFilterNoScheme, Context.RECEIVER_NOT_EXPORTED)
                 }
             } catch (_: Exception) {}
         }
@@ -104,7 +121,10 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         try {
-            unregisterReceiver(deviceChangeReceiver)
+            unregisterReceiver(usbReceiver)
+        } catch (_: Exception) {}
+        try {
+            unregisterReceiver(mediaReceiver)
         } catch (_: Exception) {}
     }
 
@@ -112,6 +132,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
+        viewModel.refreshDrives()
     }
 
     private fun handleIntent(intent: Intent?) {
@@ -130,6 +151,12 @@ class MainActivity : ComponentActivity() {
         }
         viewModel.onPermissionResult(hasPermission)
         viewModel.refreshDrives()
+        viewModel.startDeviceMonitoring()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        viewModel.stopDeviceMonitoring()
     }
 
     private fun requestStorageAccessIfNeeded() {

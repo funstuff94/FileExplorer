@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SdCard
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Tab
@@ -88,6 +89,7 @@ fun QuickAccessSidebar(
     onUnpin: (String) -> Unit,
     onAddCloudDrive: () -> Unit,
     onRemoveCloudDrive: (String) -> Unit,
+    onRefreshDrives: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -159,7 +161,26 @@ fun QuickAccessSidebar(
         Spacer(modifier = Modifier.height(12.dp))
 
         // Section: This PC / Drives
-        SectionHeader(title = "This PC", icon = Icons.Default.Computer)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp)
+        ) {
+            SectionHeader(title = "This PC", icon = Icons.Default.Computer)
+            IconButton(
+                onClick = onRefreshDrives,
+                modifier = Modifier.size(24.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Refresh devices and drives",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
         Spacer(modifier = Modifier.height(4.dp))
 
         drives.forEach { drive ->

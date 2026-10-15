@@ -21,10 +21,12 @@ import com.droid.fileexplorer.model.TransferProgress
 import com.droid.fileexplorer.model.ViewMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -519,6 +521,45 @@ class FileExplorerViewModel(
         }
     }
 
+    private var deviceMonitorJob: Job? = null
+
+    fun startDeviceMonitoring() {
+        if (deviceMonitorJob?.isActive == true) return
+        deviceMonitorJob = viewModelScope.launch {
+            while (isActive) {
+                delay(1500)
+                try {
+                    val currentDrives = _uiState.value.drives
+                    val newDrives = repository.getStorageDrives()
+                    if (newDrives != currentDrives) {
+                        val cloudDrives = repository.getCloudDrives()
+                        _uiState.update { it.copy(drives = newDrives, cloudDrives = cloudDrives) }
+
+                        val currentPath = _uiState.value.currentPath
+                        val currentTree = _uiState.value.currentTreeUri
+                        val isExternal = isExternalStoragePath(currentPath) || currentTree?.contains("mtp") == true
+                        if (isExternal) {
+                            val driveStillConnected = newDrives.any { drive ->
+                                (currentPath == drive.path || currentPath.startsWith(drive.path.trimEnd('/') + "/")) ||
+                                (currentTree != null && (drive.treeUri == currentTree || drive.path == currentTree)) ||
+                                (currentTree?.contains("mtp") == true && drive.type == DriveType.SMARTPHONE)
+                            }
+                            if (!driveStillConnected) {
+                                val fallback = newDrives.firstOrNull()?.path ?: "/storage/emulated/10"
+                                navigateTo(fallback, null)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun stopDeviceMonitoring() {
+        deviceMonitorJob?.cancel()
+        deviceMonitorJob = null
+    }
+
     fun refreshDrives() {
         viewModelScope.launch {
             try {
@@ -529,6 +570,21 @@ class FileExplorerViewModel(
                         drives = drives,
                         cloudDrives = cloudDrives
                     )
+                }
+
+                val currentPath = _uiState.value.currentPath
+                val currentTree = _uiState.value.currentTreeUri
+                val isExternal = isExternalStoragePath(currentPath) || currentTree?.contains("mtp") == true
+                if (isExternal) {
+                    val driveStillConnected = drives.any { drive ->
+                        (currentPath == drive.path || currentPath.startsWith(drive.path.trimEnd('/') + "/")) ||
+                        (currentTree != null && (drive.treeUri == currentTree || drive.path == currentTree)) ||
+                        (currentTree?.contains("mtp") == true && drive.type == DriveType.SMARTPHONE)
+                    }
+                    if (!driveStillConnected) {
+                        val fallback = drives.firstOrNull()?.path ?: "/storage/emulated/10"
+                        navigateTo(fallback, null)
+                    }
                 }
             } catch (_: Exception) {}
         }

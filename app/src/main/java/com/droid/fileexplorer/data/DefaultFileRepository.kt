@@ -463,11 +463,19 @@ class DefaultFileRepository(
                     } else {
                         rawPath
                     }
-                    if (addedPaths.contains(path)) continue
+                    val dirFile = File(path)
+                    val rawDirFile = File(rawPath)
+                    if (!dirFile.exists() && !rawDirFile.exists()) continue
+
+                    val (total1, free1) = getSpaceInfo(path)
+                    val (total2, free2) = getSpaceInfo(rawPath)
+                    val total = if (total1 > 0L) total1 else total2
+                    val free = if (total1 > 0L) free1 else free2
+                    if (total <= 0L && !dirFile.canRead() && !rawDirFile.canRead()) continue
+
                     addedPaths.add(path)
                     if (rawPath != path) addedPaths.add(rawPath)
 
-                    val (total, free) = getSpaceInfo(path)
                     val isUsb = desc.contains("usb", ignoreCase = true) ||
                         desc.contains("drive", ignoreCase = true) ||
                         desc.contains("ssd", ignoreCase = true) ||
@@ -502,22 +510,24 @@ class DefaultFileRepository(
                     if (parts.size >= 3) {
                         val rootVolumePath = "/storage/${parts[2]}"
                         val rootDir = File(rootVolumePath)
-                        if (rootDir.exists() && !addedPaths.contains(rootVolumePath)) {
-                            addedPaths.add(rootVolumePath)
+                        if (rootDir.exists() && rootDir.canRead() && !addedPaths.contains(rootVolumePath)) {
                             val (total, free) = getSpaceInfo(rootVolumePath)
-                            val letter = (driveLetterCode++).toChar()
-                            val treeUri = getPersistedTreeUriForVolume(parts[2], rootVolumePath)
-                            drives.add(
-                                DriveItem(
-                                    id = "ext_${parts[2]}",
-                                    name = "USB Drive ($letter:)",
-                                    path = rootVolumePath,
-                                    totalBytes = total,
-                                    freeBytes = free,
-                                    type = DriveType.USB,
-                                    treeUri = treeUri
+                            if (total > 0L) {
+                                addedPaths.add(rootVolumePath)
+                                val letter = (driveLetterCode++).toChar()
+                                val treeUri = getPersistedTreeUriForVolume(parts[2], rootVolumePath)
+                                drives.add(
+                                    DriveItem(
+                                        id = "ext_${parts[2]}",
+                                        name = "USB Drive ($letter:)",
+                                        path = rootVolumePath,
+                                        totalBytes = total,
+                                        freeBytes = free,
+                                        type = DriveType.USB,
+                                        treeUri = treeUri
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }
@@ -530,8 +540,12 @@ class DefaultFileRepository(
             val subDirs = storageRoot.listFiles() ?: emptyArray()
             for (sub in subDirs) {
                 if (sub.name != "emulated" && sub.name != "self" && sub.name != "knox" && !addedPaths.contains(sub.absolutePath)) {
-                    addedPaths.add(sub.absolutePath)
+                    if (!sub.isDirectory || !sub.canRead()) continue
                     val (total, free) = getSpaceInfo(sub.absolutePath)
+                    // MUST have actual non-zero capacity to be considered a mounted filesystem
+                    if (total <= 0L) continue
+
+                    addedPaths.add(sub.absolutePath)
                     val isUsb = sub.name.contains("usb", ignoreCase = true)
                     val letter = (driveLetterCode++).toChar()
                     val treeUri = getPersistedTreeUriForVolume(sub.name, sub.absolutePath)
@@ -561,8 +575,6 @@ class DefaultFileRepository(
         addedPaths: MutableSet<String>,
         startDriveLetter: Char
     ): Char {
-        var currentLetter = startDriveLetter
-
         // 1. Scan UsbManager first for physically connected smartphones (Google Pixel, Samsung Galaxy, etc.)
         val connectedPhones = mutableListOf<Triple<String, String, Int>>() // phonePath, prettyName, deviceId
         try {
@@ -614,6 +626,12 @@ class DefaultFileRepository(
             }
         } catch (_: Exception) {}
 
+        // CRITICAL GUARD: If no smartphone is physically connected to USB, do NOT add any phantom smartphone!
+        if (connectedPhones.isEmpty()) {
+            return startDriveLetter
+        }
+
+        var currentLetter = startDriveLetter
         val primaryPhoneName = connectedPhones.firstOrNull()?.second
 
         // 2. Check Android ContentResolver's persistedUriPermissions for MTP smartphones
@@ -624,6 +642,9 @@ class DefaultFileRepository(
                 val uriStr = perm.uri.toString()
                 if (uriStr.contains("com.android.mtp.documents")) {
                     val rootDoc = try { DocumentFile.fromTreeUri(context, perm.uri) } catch (_: Exception) { null }
+                    val isAccessible = try { rootDoc != null && rootDoc.exists() && rootDoc.canRead() } catch (_: Exception) { false }
+                    if (!isAccessible) continue
+
                     val rawTitle = rootDoc?.name?.takeIf { it.isNotBlank() } ?: "Android Smartphone"
                     val phoneTitle = if (primaryPhoneName != null && (rawTitle == "Android Smartphone" || rawTitle.contains("Internal", ignoreCase = true) || rawTitle.contains("storage", ignoreCase = true))) {
                         "$primaryPhoneName ($rawTitle)"
