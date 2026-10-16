@@ -86,6 +86,8 @@ import com.droid.fileexplorer.viewmodel.FileExplorerViewModel
 @Composable
 fun FileExplorerApp(
     viewModel: FileExplorerViewModel,
+    isDarkTheme: Boolean = false,
+    onToggleTheme: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -344,6 +346,8 @@ fun FileExplorerApp(
             breadcrumbs = uiState.breadcrumbs,
             searchQuery = uiState.searchQuery,
             isCurrentFolderPinned = uiState.isCurrentDirectoryPinned,
+            isDarkTheme = isDarkTheme,
+            onToggleTheme = onToggleTheme,
             onTabClick = { tabId -> viewModel.switchTab(tabId) },
             onTabClose = { tabId -> viewModel.closeTab(tabId) },
             onNewTab = { viewModel.openNewTab() },

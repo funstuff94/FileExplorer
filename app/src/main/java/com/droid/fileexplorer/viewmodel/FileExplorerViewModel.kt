@@ -59,7 +59,8 @@ data class ExplorerUiState(
     val isReadOnlyVolume: Boolean = false,
     val readOnlyVolumeName: String = "",
     val readOnlyVolumePath: String = "",
-    val showVideoThumbnails: Boolean = true
+    val showVideoThumbnails: Boolean = true,
+    val isDarkMode: Boolean? = null
 ) {
     val selectedDirectories: List<FileItem>
         get() = filteredItems.filter { selectedItemPaths.contains(it.path) && it.isDirectory }
@@ -96,7 +97,14 @@ class FileExplorerViewModel(
     init {
         val initialThumbnails = repository.isVideoThumbnailsEnabled()
         val initialViewMode = repository.getViewMode()
-        _uiState.update { it.copy(showVideoThumbnails = initialThumbnails, viewMode = initialViewMode) }
+        val initialDarkMode = repository.getDarkModePreference()
+        _uiState.update {
+            it.copy(
+                showVideoThumbnails = initialThumbnails,
+                viewMode = initialViewMode,
+                isDarkMode = initialDarkMode
+            )
+        }
         loadInitialData()
         observeSharedState()
     }
@@ -631,6 +639,18 @@ class FileExplorerViewModel(
     fun setShowVideoThumbnails(enabled: Boolean) {
         repository.setVideoThumbnailsEnabled(enabled)
         _uiState.update { it.copy(showVideoThumbnails = enabled) }
+    }
+
+    fun toggleDarkMode(systemInDarkTheme: Boolean) {
+        val current = _uiState.value.isDarkMode ?: systemInDarkTheme
+        val next = !current
+        repository.setDarkModePreference(next)
+        _uiState.update { it.copy(isDarkMode = next) }
+    }
+
+    fun setDarkMode(isDark: Boolean) {
+        repository.setDarkModePreference(isDark)
+        _uiState.update { it.copy(isDarkMode = isDark) }
     }
 
     fun toggleSelect(path: String) {

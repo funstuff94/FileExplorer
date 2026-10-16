@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.PushPin
@@ -88,6 +90,8 @@ fun WindowsTopBar(
     canGoBack: Boolean = true,
     canGoForward: Boolean = true,
     isCurrentFolderPinned: Boolean = false,
+    isDarkTheme: Boolean = false,
+    onToggleTheme: () -> Unit = {},
     onTabClick: (String) -> Unit,
     onTabClose: (String) -> Unit,
     onNewTab: () -> Unit,
@@ -624,6 +628,29 @@ fun WindowsTopBar(
                         }
                     }
                 }
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Windows 11 Dark / Light Mode Toggle Button
+            IconButton(
+                onClick = onToggleTheme,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                        RoundedCornerShape(6.dp)
+                    )
+            ) {
+                Icon(
+                    imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                    contentDescription = if (isDarkTheme) "Switch to Light mode" else "Switch to Dark mode",
+                    tint = if (isDarkTheme) Win11FolderYellow else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }

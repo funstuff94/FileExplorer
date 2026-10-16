@@ -1744,4 +1744,13 @@ class DefaultFileRepository(
     override fun setViewMode(mode: ViewMode) {
         prefs.edit().putString("view_mode", mode.name).apply()
     }
+
+    override fun getDarkModePreference(): Boolean? {
+        if (!prefs.contains("is_dark_mode")) return null
+        return prefs.getBoolean("is_dark_mode", false)
+    }
+
+    override fun setDarkModePreference(isDark: Boolean) {
+        prefs.edit().putBoolean("is_dark_mode", isDark).apply()
+    }
 }

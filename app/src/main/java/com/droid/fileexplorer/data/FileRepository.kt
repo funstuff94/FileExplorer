@@ -45,4 +45,6 @@ interface FileRepository {
     fun setVideoThumbnailsEnabled(enabled: Boolean) {}
     fun getViewMode(): ViewMode = ViewMode.GRID
     fun setViewMode(mode: ViewMode) {}
+    fun getDarkModePreference(): Boolean? = null
+    fun setDarkModePreference(isDark: Boolean) {}
 }

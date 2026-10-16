@@ -179,6 +179,12 @@ class FakeFileRepository : FileRepository {
         return false
     }
 
+    var darkModePref: Boolean? = null
+    override fun getDarkModePreference(): Boolean? = darkModePref
+    override fun setDarkModePreference(isDark: Boolean) {
+        darkModePref = isDark
+    }
+
     private var videoThumbnailsEnabled = true
     override fun isVideoThumbnailsEnabled(): Boolean = videoThumbnailsEnabled
     override fun setVideoThumbnailsEnabled(enabled: Boolean) {
@@ -959,6 +965,29 @@ class FileExplorerViewModelTest {
 
         assertFalse(viewModel.uiState.value.drives.any { it.id == "usb2" })
         viewModel.stopDeviceMonitoring()
+    }
+
+    @Test
+    fun testDarkMode_toggleUpdatesStateAndRepository() = runTest(testDispatcher) {
+        // Initial state when no pref stored
+        assertEquals(null, viewModel.uiState.value.isDarkMode)
+
+        // Toggle when system is dark (true) -> should switch to light (false)
+        viewModel.toggleDarkMode(systemInDarkTheme = true)
+        assertEquals(false, viewModel.uiState.value.isDarkMode)
+        assertEquals(false, repository.darkModePref)
+
+        // Toggle again -> should switch to dark (true)
+        viewModel.toggleDarkMode(systemInDarkTheme = true)
+        assertEquals(true, viewModel.uiState.value.isDarkMode)
+        assertEquals(true, repository.darkModePref)
+    }
+
+    @Test
+    fun testDarkMode_initialPreferenceLoadedFromRepository() = runTest(testDispatcher) {
+        repository.darkModePref = true
+        val newVm = FileExplorerViewModel(repository)
+        assertEquals(true, newVm.uiState.value.isDarkMode)
     }
 }
 
