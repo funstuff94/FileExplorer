@@ -2,12 +2,21 @@
 
 Desktop-class Windows 11-style file explorer for Android Laptop / Googlebook.
 
+## Screenshots
+
+### Dark Mode
+![Dark Mode](Screenshots/1-dark-mode.png)
+
+### Light Mode
+![Light Mode](Screenshots/2-light-mode.png)
+
 ## Features
 
 - **Windows 11 UI & Design**: Command bar, address bar with editable path navigation, breadcrumbs, Quick Access navigation panel, and fluid animations.
+- **Dark & Light Mode**: Instant one-click theme toggle on the top bar with automatic preference persistence.
 - **Multi-Window & Tabs**: Open folders in new tabs or separate application windows with cross-window drag-and-drop and clipboard cut/copy/paste.
-- **Context Menus & File Creation**: Right-click context menus for empty space and items, including "New Folder" and "New Text Document".
-- **External Storage Integration**: Seamless access to internal storage and secondary external drives (USB drives, SD cards) via Storage Access Framework (SAF).
+- **Context Menus & File Creation**: Right-click context menus for empty space and items, including "New Folder", "New Text Document", and Windows 11-style "Open with" flyout app picker.
+- **External Storage Integration**: Seamless access to internal storage and secondary external drives (USB drives, SD cards, MTP smartphones) via Storage Access Framework (SAF).
 - **APK Installation**: One-click and context menu package installation for `.apk` files with automated unknown app source permission handling.
 - **Keyboard Shortcuts**: Full desktop keyboard and mouse support (Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+A, Delete, Enter, marquee drag selection).
 - **View Modes & Sorting**: Toggle between Grid view and Details view; sort by name, date modified, size, or type.
