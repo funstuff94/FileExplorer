@@ -206,15 +206,39 @@ class DefaultFileRepository(
                 var shortcutTargetPath: String? = null
                 var shortcutTargetTreeUri: String? = null
                 var shortcutTargetIsDir = false
+                var shortcutTargetExtension = ""
+                var shortcutTargetFileType = ""
+                var shortcutTargetSize = -1L
                 if (file.name.endsWith(".lnk", ignoreCase = true) && file.length() < 10000) {
                     try {
                         val content = file.readText()
                         val json = JSONObject(content)
                         if (json.optString("type") == "shortcut") {
                             isShortcut = true
-                            shortcutTargetPath = json.optString("targetPath")
+                            shortcutTargetPath = json.optString("targetPath").ifEmpty { null }
                             shortcutTargetTreeUri = json.optString("targetTreeUri").ifEmpty { null }
                             shortcutTargetIsDir = json.optBoolean("isDirectory", false)
+                            shortcutTargetExtension = json.optString("targetExtension")
+                            shortcutTargetFileType = json.optString("targetFileType")
+                            shortcutTargetSize = json.optLong("targetSize", -1L)
+
+                            if (shortcutTargetExtension.isEmpty()) {
+                                val tName = json.optString("targetName").ifEmpty { shortcutTargetPath?.substringAfterLast('/') ?: "" }
+                                if (!shortcutTargetIsDir && tName.contains('.')) {
+                                    shortcutTargetExtension = tName.substringAfterLast('.').lowercase()
+                                }
+                            }
+                            if (shortcutTargetFileType.isEmpty() || shortcutTargetFileType.contains("lnk", ignoreCase = true) || shortcutTargetFileType.contains("shortcut", ignoreCase = true)) {
+                                shortcutTargetFileType = FileItem.resolveFileTypeDescription(shortcutTargetExtension, isDirectory = shortcutTargetIsDir)
+                            }
+                            if (shortcutTargetSize < 0 && !shortcutTargetPath.isNullOrEmpty()) {
+                                try {
+                                    val targetFile = File(shortcutTargetPath)
+                                    if (targetFile.exists()) {
+                                        shortcutTargetSize = if (shortcutTargetIsDir) 0L else targetFile.length()
+                                    }
+                                } catch (_: Exception) {}
+                            }
                         }
                     } catch (_: Exception) {}
                 }
@@ -224,7 +248,7 @@ class DefaultFileRepository(
                     name = file.name,
                     path = file.absolutePath,
                     isDirectory = isDir,
-                    size = dirSize,
+                    size = if (isShortcut && shortcutTargetSize >= 0) shortcutTargetSize else dirSize,
                     lastModified = file.lastModified(),
                     extension = if (isDir) "" else file.extension.lowercase(),
                     treeUri = if (isExternal) effectiveTreeUri else null,
@@ -233,7 +257,10 @@ class DefaultFileRepository(
                     isShortcut = isShortcut,
                     shortcutTargetPath = shortcutTargetPath,
                     shortcutTargetTreeUri = shortcutTargetTreeUri,
-                    shortcutTargetIsDirectory = shortcutTargetIsDir
+                    shortcutTargetIsDirectory = shortcutTargetIsDir,
+                    shortcutTargetExtension = shortcutTargetExtension,
+                    shortcutTargetFileType = shortcutTargetFileType,
+                    shortcutTargetSize = shortcutTargetSize
                 )
             }
         }
@@ -258,6 +285,9 @@ class DefaultFileRepository(
                     var shortcutTargetPath: String? = null
                     var shortcutTargetTreeUri: String? = null
                     var shortcutTargetIsDir = false
+                    var shortcutTargetExtension = ""
+                    var shortcutTargetFileType = ""
+                    var shortcutTargetSize = -1L
                     if (name.endsWith(".lnk", ignoreCase = true) && doc.length() < 10000) {
                         try {
                             context.contentResolver.openInputStream(doc.uri)?.use { stream ->
@@ -265,9 +295,30 @@ class DefaultFileRepository(
                                 val json = JSONObject(content)
                                 if (json.optString("type") == "shortcut") {
                                     isShortcut = true
-                                    shortcutTargetPath = json.optString("targetPath")
+                                    shortcutTargetPath = json.optString("targetPath").ifEmpty { null }
                                     shortcutTargetTreeUri = json.optString("targetTreeUri").ifEmpty { null }
                                     shortcutTargetIsDir = json.optBoolean("isDirectory", false)
+                                    shortcutTargetExtension = json.optString("targetExtension")
+                                    shortcutTargetFileType = json.optString("targetFileType")
+                                    shortcutTargetSize = json.optLong("targetSize", -1L)
+
+                                    if (shortcutTargetExtension.isEmpty()) {
+                                        val tName = json.optString("targetName").ifEmpty { shortcutTargetPath?.substringAfterLast('/') ?: "" }
+                                        if (!shortcutTargetIsDir && tName.contains('.')) {
+                                            shortcutTargetExtension = tName.substringAfterLast('.').lowercase()
+                                        }
+                                    }
+                                    if (shortcutTargetFileType.isEmpty() || shortcutTargetFileType.contains("lnk", ignoreCase = true) || shortcutTargetFileType.contains("shortcut", ignoreCase = true)) {
+                                        shortcutTargetFileType = FileItem.resolveFileTypeDescription(shortcutTargetExtension, isDirectory = shortcutTargetIsDir)
+                                    }
+                                    if (shortcutTargetSize < 0 && !shortcutTargetPath.isNullOrEmpty()) {
+                                        try {
+                                            val targetFile = File(shortcutTargetPath)
+                                            if (targetFile.exists()) {
+                                                shortcutTargetSize = if (shortcutTargetIsDir) 0L else targetFile.length()
+                                            }
+                                        } catch (_: Exception) {}
+                                    }
                                 }
                             }
                         } catch (_: Exception) {}
@@ -278,7 +329,7 @@ class DefaultFileRepository(
                         name = name,
                         path = cleanPath,
                         isDirectory = isDir,
-                        size = docSize,
+                        size = if (isShortcut && shortcutTargetSize >= 0) shortcutTargetSize else docSize,
                         lastModified = doc.lastModified(),
                         extension = ext,
                         mimeType = doc.type ?: "",
@@ -289,7 +340,10 @@ class DefaultFileRepository(
                         isShortcut = isShortcut,
                         shortcutTargetPath = shortcutTargetPath,
                         shortcutTargetTreeUri = shortcutTargetTreeUri,
-                        shortcutTargetIsDirectory = shortcutTargetIsDir
+                        shortcutTargetIsDirectory = shortcutTargetIsDir,
+                        shortcutTargetExtension = shortcutTargetExtension,
+                        shortcutTargetFileType = shortcutTargetFileType,
+                        shortcutTargetSize = shortcutTargetSize
                     )
                 }
             }
@@ -349,6 +403,9 @@ class DefaultFileRepository(
             var shortcutTargetPath: String? = null
             var shortcutTargetTreeUri: String? = null
             var shortcutTargetIsDir = false
+            var shortcutTargetExtension = ""
+            var shortcutTargetFileType = ""
+            var shortcutTargetSize = -1L
             if (name.endsWith(".lnk", ignoreCase = true) && doc.length() < 10000) {
                 try {
                     context.contentResolver.openInputStream(doc.uri)?.use { stream ->
@@ -356,9 +413,30 @@ class DefaultFileRepository(
                         val json = JSONObject(content)
                         if (json.optString("type") == "shortcut") {
                             isShortcut = true
-                            shortcutTargetPath = json.optString("targetPath")
+                            shortcutTargetPath = json.optString("targetPath").ifEmpty { null }
                             shortcutTargetTreeUri = json.optString("targetTreeUri").ifEmpty { null }
                             shortcutTargetIsDir = json.optBoolean("isDirectory", false)
+                            shortcutTargetExtension = json.optString("targetExtension")
+                            shortcutTargetFileType = json.optString("targetFileType")
+                            shortcutTargetSize = json.optLong("targetSize", -1L)
+
+                            if (shortcutTargetExtension.isEmpty()) {
+                                val tName = json.optString("targetName").ifEmpty { shortcutTargetPath?.substringAfterLast('/') ?: "" }
+                                if (!shortcutTargetIsDir && tName.contains('.')) {
+                                    shortcutTargetExtension = tName.substringAfterLast('.').lowercase()
+                                }
+                            }
+                            if (shortcutTargetFileType.isEmpty() || shortcutTargetFileType.contains("lnk", ignoreCase = true) || shortcutTargetFileType.contains("shortcut", ignoreCase = true)) {
+                                shortcutTargetFileType = FileItem.resolveFileTypeDescription(shortcutTargetExtension, isDirectory = shortcutTargetIsDir)
+                            }
+                            if (shortcutTargetSize < 0 && !shortcutTargetPath.isNullOrEmpty()) {
+                                try {
+                                    val targetFile = File(shortcutTargetPath)
+                                    if (targetFile.exists()) {
+                                        shortcutTargetSize = if (shortcutTargetIsDir) 0L else targetFile.length()
+                                    }
+                                } catch (_: Exception) {}
+                            }
                         }
                     }
                 } catch (_: Exception) {}
@@ -369,7 +447,7 @@ class DefaultFileRepository(
                 name = name,
                 path = cleanPath,
                 isDirectory = isDir,
-                size = docSize,
+                size = if (isShortcut && shortcutTargetSize >= 0) shortcutTargetSize else docSize,
                 lastModified = doc.lastModified(),
                 extension = ext,
                 mimeType = doc.type ?: "",
@@ -380,7 +458,10 @@ class DefaultFileRepository(
                 isShortcut = isShortcut,
                 shortcutTargetPath = shortcutTargetPath,
                 shortcutTargetTreeUri = shortcutTargetTreeUri,
-                shortcutTargetIsDirectory = shortcutTargetIsDir
+                shortcutTargetIsDirectory = shortcutTargetIsDir,
+                shortcutTargetExtension = shortcutTargetExtension,
+                shortcutTargetFileType = shortcutTargetFileType,
+                shortcutTargetSize = shortcutTargetSize
             )
         }
     }
@@ -1525,18 +1606,56 @@ class DefaultFileRepository(
         destTreeUri: String?
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            val baseName = if (targetItem.isDirectory) {
-                targetItem.name
+            val isTargetDir = if (targetItem.isShortcut) targetItem.shortcutTargetIsDirectory else targetItem.isDirectory
+            val targetExt = if (targetItem.isShortcut) {
+                targetItem.shortcutTargetExtension.ifEmpty {
+                    val tName = targetItem.shortcutTargetPath?.substringAfterLast('/') ?: targetItem.name.removeSuffix(".lnk").removeSuffix(" - Shortcut")
+                    if (tName.contains('.')) tName.substringAfterLast('.').lowercase() else ""
+                }
             } else {
-                targetItem.name.substringBeforeLast('.')
+                targetItem.extension
+            }
+            val targetType = targetItem.displayFileType
+            val targetActualPath = if (targetItem.isShortcut && !targetItem.shortcutTargetPath.isNullOrEmpty()) {
+                targetItem.shortcutTargetPath
+            } else {
+                targetItem.path
+            }
+            val targetActualTreeUri = if (targetItem.isShortcut && !targetItem.shortcutTargetTreeUri.isNullOrEmpty()) {
+                targetItem.shortcutTargetTreeUri
+            } else {
+                targetItem.treeUri ?: ""
+            }
+            val targetActualSize = if (targetItem.isShortcut && targetItem.shortcutTargetSize >= 0) {
+                targetItem.shortcutTargetSize
+            } else {
+                targetItem.size
+            }
+
+            val baseName = if (isTargetDir) {
+                if (targetItem.name.endsWith(".lnk", ignoreCase = true)) {
+                    targetItem.name.removeSuffix(".lnk").removeSuffix(" - Shortcut")
+                } else {
+                    targetItem.name
+                }
+            } else {
+                if (targetItem.name.endsWith(".lnk", ignoreCase = true)) {
+                    targetItem.name.removeSuffix(".lnk").removeSuffix(" - Shortcut")
+                } else {
+                    targetItem.name.substringBeforeLast('.')
+                }
             }
             val shortcutBase = "$baseName - Shortcut"
             val json = JSONObject().apply {
                 put("type", "shortcut")
-                put("targetPath", targetItem.path)
-                put("targetTreeUri", targetItem.treeUri ?: "")
-                put("targetName", targetItem.name)
-                put("isDirectory", targetItem.isDirectory)
+                put("targetPath", targetActualPath)
+                put("targetTreeUri", targetActualTreeUri)
+                put("targetName", if (isTargetDir) baseName else (if (targetExt.isNotEmpty()) "$baseName.$targetExt" else baseName))
+                put("isDirectory", isTargetDir)
+                put("targetExtension", targetExt)
+                put("targetFileType", targetType)
+                put("targetSize", targetActualSize)
+                put("targetMimeType", targetItem.mimeType)
                 put("createdAt", System.currentTimeMillis())
             }
 

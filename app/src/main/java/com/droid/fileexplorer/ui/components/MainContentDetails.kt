@@ -592,7 +592,7 @@ fun MainContentDetails(
 
                                     // Type
                                     Text(
-                                        text = if (item.isShortcut) "Shortcut" else if (item.isDirectory) "File folder" else item.category.name.lowercase().replaceFirstChar { it.uppercase() } + " File",
+                                        text = item.displayFileType,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,

@@ -48,7 +48,7 @@ fun FileTypeIcon(
     modifier: Modifier = Modifier
 ) {
     val isFolder = item.isDirectory || (item.isShortcut && item.shortcutTargetIsDirectory)
-    val isVideo = item.category == FileCategory.VIDEO && !isFolder
+    val isVideo = item.effectiveCategory == FileCategory.VIDEO && !isFolder
 
     // Video Thumbnail Loader
     if (isVideo && showVideoThumbnail) {
@@ -128,13 +128,13 @@ fun FileTypeIcon(
 
     val (icon, tint, bgColor) = when {
         isFolder -> Triple(Icons.Default.Folder, Win11FolderYellow, Color.Transparent)
-        item.category == FileCategory.IMAGE -> Triple(Icons.Default.Image, Color(0xFF0078D4), Color(0x180078D4))
-        item.category == FileCategory.VIDEO -> Triple(Icons.Default.Videocam, Color(0xFFD83B01), Color(0x18D83B01))
-        item.category == FileCategory.AUDIO -> Triple(Icons.Default.Audiotrack, Color(0xFFE3008C), Color(0x18E3008C))
-        item.category == FileCategory.DOCUMENT -> Triple(Icons.Default.Description, Color(0xFF107C41), Color(0x18107C41))
-        item.category == FileCategory.CODE -> Triple(Icons.Default.Code, Color(0xFF008272), Color(0x18008272))
-        item.category == FileCategory.ARCHIVE -> Triple(Icons.Default.Archive, Color(0xFF8E562E), Color(0x188E562E))
-        item.category == FileCategory.APK -> Triple(Icons.Default.Android, Color(0xFF3DDC84), Color(0x183DDC84))
+        item.effectiveCategory == FileCategory.IMAGE -> Triple(Icons.Default.Image, Color(0xFF0078D4), Color(0x180078D4))
+        item.effectiveCategory == FileCategory.VIDEO -> Triple(Icons.Default.Videocam, Color(0xFFD83B01), Color(0x18D83B01))
+        item.effectiveCategory == FileCategory.AUDIO -> Triple(Icons.Default.Audiotrack, Color(0xFFE3008C), Color(0x18E3008C))
+        item.effectiveCategory == FileCategory.DOCUMENT -> Triple(Icons.Default.Description, Color(0xFF107C41), Color(0x18107C41))
+        item.effectiveCategory == FileCategory.CODE -> Triple(Icons.Default.Code, Color(0xFF008272), Color(0x18008272))
+        item.effectiveCategory == FileCategory.ARCHIVE -> Triple(Icons.Default.Archive, Color(0xFF8E562E), Color(0x188E562E))
+        item.effectiveCategory == FileCategory.APK -> Triple(Icons.Default.Android, Color(0xFF3DDC84), Color(0x183DDC84))
         else -> Triple(Icons.Default.InsertDriveFile, Color(0xFF797775), Color(0x18797775))
     }
 

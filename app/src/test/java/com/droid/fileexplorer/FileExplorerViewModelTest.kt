@@ -143,10 +143,15 @@ class FakeFileRepository : FileRepository {
                 id = "$destDirPath/$name",
                 name = name,
                 path = "$destDirPath/$name",
-                isDirectory = targetItem.isDirectory,
+                isDirectory = false,
+                size = targetItem.size,
+                extension = "lnk",
                 isShortcut = true,
                 shortcutTargetPath = targetItem.path,
-                shortcutTargetIsDirectory = targetItem.isDirectory
+                shortcutTargetIsDirectory = targetItem.isDirectory,
+                shortcutTargetExtension = targetItem.extension,
+                shortcutTargetFileType = targetItem.displayFileType,
+                shortcutTargetSize = targetItem.size
             )
         )
         return true
@@ -424,6 +429,7 @@ class FileExplorerViewModelTest {
     fun testCreateShortcut_inCurrentDirectory() = runTest(testDispatcher) {
         advanceUntilIdle()
 
+        // 1. Folder shortcut
         val docItem = viewModel.uiState.value.items.first { it.name == "Documents" }
         viewModel.createShortcut(docItem)
         advanceUntilIdle()
@@ -433,6 +439,72 @@ class FileExplorerViewModelTest {
         assertNotNull(shortcut)
         assertTrue(shortcut!!.isShortcut)
         assertEquals("/storage/emulated/10/Documents", shortcut.shortcutTargetPath)
+        assertEquals("File folder", shortcut.displayFileType)
+
+        // 2. File shortcut (notes.txt)
+        val textItem = viewModel.uiState.value.items.first { it.name == "notes.txt" }
+        viewModel.createShortcut(textItem)
+        advanceUntilIdle()
+
+        val textShortcut = repository.listFiles("/storage/emulated/10").firstOrNull { it.name == "notes.txt - Shortcut.lnk" }
+        assertNotNull(textShortcut)
+        assertTrue(textShortcut!!.isShortcut)
+        assertEquals("/storage/emulated/10/notes.txt", textShortcut.shortcutTargetPath)
+        assertEquals("txt", textShortcut.shortcutTargetExtension)
+        assertEquals("Text Document", textShortcut.displayFileType)
+        assertFalse(textShortcut.displayFileType.contains("ink", ignoreCase = true))
+        assertFalse(textShortcut.displayFileType.contains("lnk", ignoreCase = true))
+
+        // 3. File shortcut (image.png)
+        val imgItem = viewModel.uiState.value.items.first { it.name == "image.png" }
+        viewModel.createShortcut(imgItem)
+        advanceUntilIdle()
+
+        val imgShortcut = repository.listFiles("/storage/emulated/10").firstOrNull { it.name == "image.png - Shortcut.lnk" }
+        assertNotNull(imgShortcut)
+        assertTrue(imgShortcut!!.isShortcut)
+        assertEquals("PNG File", imgShortcut.displayFileType)
+    }
+
+    @Test
+    fun testDisplayFileType_forVariousFilesAndShortcuts() {
+        // Regular files
+        val pdfItem = FileItem("1", "document.pdf", "/doc/document.pdf", isDirectory = false, extension = "pdf")
+        assertEquals("PDF Document", pdfItem.displayFileType)
+
+        val pngItem = FileItem("2", "photo.png", "/img/photo.png", isDirectory = false, extension = "png")
+        assertEquals("PNG File", pngItem.displayFileType)
+
+        val dirItem = FileItem("3", "Music", "/Music", isDirectory = true)
+        assertEquals("File folder", dirItem.displayFileType)
+
+        // Shortcut pointing to PDF
+        val pdfShortcut = FileItem(
+            id = "4",
+            name = "document - Shortcut.lnk",
+            path = "/Desktop/document - Shortcut.lnk",
+            isDirectory = false,
+            extension = "lnk",
+            isShortcut = true,
+            shortcutTargetPath = "/doc/document.pdf",
+            shortcutTargetExtension = "pdf",
+            shortcutTargetFileType = "PDF Document"
+        )
+        assertEquals("PDF Document", pdfShortcut.displayFileType)
+        assertFalse(pdfShortcut.displayFileType.contains("lnk", ignoreCase = true))
+        assertFalse(pdfShortcut.displayFileType.contains("ink", ignoreCase = true))
+
+        // Legacy shortcut with no explicit shortcutTargetFileType or shortcutTargetExtension
+        val legacyShortcut = FileItem(
+            id = "5",
+            name = "video - Shortcut.lnk",
+            path = "/Desktop/video - Shortcut.lnk",
+            isDirectory = false,
+            extension = "lnk",
+            isShortcut = true,
+            shortcutTargetPath = "/movies/video.mp4"
+        )
+        assertEquals("MP4 Video", legacyShortcut.displayFileType)
     }
 
     @Test

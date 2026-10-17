@@ -356,7 +356,13 @@ fun PropertiesDialog(
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
-                PropertyRow(label = "Type:", value = if (item.isDirectory) "File folder" else "${item.category.name} (${item.extension.ifEmpty { "file" }})")
+                val typeValue = when {
+                    item.isShortcut -> "${item.displayFileType} (Shortcut)"
+                    item.isDirectory -> "File folder"
+                    item.extension.isNotEmpty() -> "${item.displayFileType} (.${item.extension})"
+                    else -> item.displayFileType
+                }
+                PropertyRow(label = "Type:", value = typeValue)
                 PropertyRow(label = "Location:", value = item.path)
                 PropertyRow(label = "Size:", value = displaySizeText)
                 if (containsText != null) {

@@ -657,7 +657,7 @@ private fun GridItemCard(
     var showContextMenu by remember { mutableStateOf(false) }
 
     val isExtraLarge = viewMode == ViewMode.EXTRA_LARGE
-    val cardHeight = if (isExtraLarge) 205.dp else 130.dp
+    val cardHeight = if (isExtraLarge) 225.dp else 150.dp
     val iconSize = if (isExtraLarge) 96.dp else 44.dp
 
     val cardColor = when {
@@ -782,6 +782,17 @@ private fun GridItemCard(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                // File Type (original target type for shortcuts)
+                Text(
+                    text = item.displayFileType,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
                 // Subtitle (Item count, Shortcut, Size, or Drop hint)
                 Text(
                     text = when {
@@ -793,7 +804,9 @@ private fun GridItemCard(
                     color = if (isDropTarget) Win11Blue else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = if (isDropTarget) FontWeight.Bold else FontWeight.Normal,
                     textAlign = TextAlign.Center,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }

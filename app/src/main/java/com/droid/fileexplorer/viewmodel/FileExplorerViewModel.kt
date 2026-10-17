@@ -1375,7 +1375,7 @@ class FileExplorerViewModel(
             SortField.NAME -> compareBy<FileItem> { it.name.lowercase() }
             SortField.DATE_MODIFIED -> compareBy<FileItem> { it.lastModified }
             SortField.SIZE -> compareBy<FileItem> { it.size }
-            SortField.TYPE -> compareBy<FileItem> { it.extension.lowercase() }.thenBy { it.name.lowercase() }
+            SortField.TYPE -> compareBy<FileItem> { it.displayFileType.lowercase() }.thenBy { it.name.lowercase() }
         }
         return if (sort.direction == SortDirection.ASCENDING) base else base.reversed()
     }

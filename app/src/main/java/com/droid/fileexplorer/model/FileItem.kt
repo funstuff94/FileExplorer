@@ -29,8 +29,49 @@ data class FileItem(
     val isShortcut: Boolean = false,
     val shortcutTargetPath: String? = null,
     val shortcutTargetTreeUri: String? = null,
-    val shortcutTargetIsDirectory: Boolean = false
+    val shortcutTargetIsDirectory: Boolean = false,
+    val shortcutTargetExtension: String = "",
+    val shortcutTargetFileType: String = "",
+    val shortcutTargetSize: Long = -1L
 ) {
+    val displayExtension: String
+        get() = if (isShortcut) {
+            if (shortcutTargetIsDirectory) "" else shortcutTargetExtension.ifEmpty {
+                val tName = shortcutTargetPath?.substringAfterLast('/') ?: name.removeSuffix(".lnk").removeSuffix(" - Shortcut")
+                if (tName.contains('.')) tName.substringAfterLast('.').lowercase() else ""
+            }
+        } else {
+            extension
+        }
+
+    val displayFileType: String
+        get() {
+            if (isShortcut) {
+                if (shortcutTargetIsDirectory) return "File folder"
+                if (shortcutTargetFileType.isNotBlank() &&
+                    !shortcutTargetFileType.contains("lnk", ignoreCase = true) &&
+                    !shortcutTargetFileType.contains("shortcut", ignoreCase = true)
+                ) {
+                    return shortcutTargetFileType
+                }
+                return resolveFileTypeDescription(displayExtension, isDirectory = false)
+            }
+            return resolveFileTypeDescription(extension, isDirectory = isDirectory)
+        }
+
+    val effectiveCategory: FileCategory
+        get() = when {
+            isDirectory || (isShortcut && shortcutTargetIsDirectory) -> FileCategory.FOLDER
+            displayExtension in listOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "svg") -> FileCategory.IMAGE
+            displayExtension in listOf("mp4", "mkv", "webm", "avi", "mov", "3gp") -> FileCategory.VIDEO
+            displayExtension in listOf("mp3", "wav", "ogg", "m4a", "flac", "aac") -> FileCategory.AUDIO
+            displayExtension in listOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md") -> FileCategory.DOCUMENT
+            displayExtension in listOf("kt", "java", "py", "c", "cpp", "h", "json", "xml", "html", "css", "js", "ts", "sh", "gradle") -> FileCategory.CODE
+            displayExtension in listOf("zip", "rar", "tar", "gz", "7z", "bz2") -> FileCategory.ARCHIVE
+            displayExtension == "apk" -> FileCategory.APK
+            else -> if (isShortcut) FileCategory.SHORTCUT else FileCategory.OTHER
+        }
+
     val category: FileCategory
         get() = when {
             isShortcut -> FileCategory.SHORTCUT
@@ -46,7 +87,7 @@ data class FileItem(
         }
 
     val formattedSize: String
-        get() = if (isDirectory) {
+        get() = if (isDirectory || (isShortcut && shortcutTargetIsDirectory)) {
             val sizeStr = if (size > 0L) formatByteSize(size) else ""
             val countStr = if (childCount > 0) "$childCount items" else ""
             when {
@@ -60,6 +101,88 @@ data class FileItem(
         }
 
     companion object {
+        fun resolveFileTypeDescription(extension: String, isDirectory: Boolean): String {
+            if (isDirectory) return "File folder"
+            val ext = extension.trim().trimStart('.').lowercase()
+            return when (ext) {
+                // Images
+                "png" -> "PNG File"
+                "jpg", "jpeg" -> "JPG File"
+                "gif" -> "GIF File"
+                "webp" -> "WEBP File"
+                "bmp" -> "BMP File"
+                "svg" -> "SVG File"
+                "ico" -> "Icon File"
+                "heic", "heif" -> "HEIC Image"
+                "tif", "tiff" -> "TIFF Image"
+
+                // Documents
+                "pdf" -> "PDF Document"
+                "txt" -> "Text Document"
+                "doc", "docx" -> "Word Document"
+                "xls", "xlsx" -> "Excel Spreadsheet"
+                "ppt", "pptx" -> "PowerPoint Presentation"
+                "csv" -> "CSV Document"
+                "rtf" -> "Rich Text Document"
+                "md" -> "Markdown Document"
+                "epub", "mobi" -> "E-Book"
+
+                // Video
+                "mp4" -> "MP4 Video"
+                "mkv" -> "MKV Video"
+                "avi" -> "AVI Video"
+                "mov" -> "MOV Video"
+                "webm" -> "WEBM Video"
+                "3gp" -> "3GP Video"
+                "flv", "wmv", "m4v" -> "Video File"
+
+                // Audio
+                "mp3" -> "MP3 Audio"
+                "wav" -> "WAV Audio"
+                "flac" -> "FLAC Audio"
+                "m4a", "aac" -> "AAC Audio"
+                "ogg", "opus" -> "OGG Audio"
+                "mid", "midi" -> "MIDI File"
+
+                // Code / Developer
+                "kt", "kts" -> "Kotlin Source File"
+                "java" -> "Java Source File"
+                "py" -> "Python File"
+                "c", "h" -> "C Source File"
+                "cpp", "hpp", "cc", "cxx" -> "C++ Source File"
+                "cs" -> "C# Source File"
+                "js" -> "JavaScript File"
+                "ts" -> "TypeScript File"
+                "html", "htm" -> "HTML Document"
+                "css" -> "CSS Stylesheet"
+                "json" -> "JSON File"
+                "xml" -> "XML File"
+                "yaml", "yml" -> "YAML File"
+                "sh", "bash" -> "Shell Script"
+                "gradle" -> "Gradle Script"
+                "sql" -> "SQL File"
+
+                // Archives
+                "zip" -> "ZIP Archive"
+                "rar" -> "RAR Archive"
+                "7z" -> "7Z Archive"
+                "tar" -> "TAR Archive"
+                "gz", "tgz" -> "GZ Archive"
+                "bz2" -> "BZ2 Archive"
+                "xz" -> "XZ Archive"
+
+                // Executables / Installers
+                "apk" -> "APK File"
+                "exe" -> "Application"
+                "dmg" -> "Mac Disk Image"
+                "iso" -> "ISO Disk Image"
+                "deb", "rpm" -> "Linux Package"
+
+                // Default
+                "" -> "File"
+                else -> "${ext.uppercase()} File"
+            }
+        }
         fun formatByteSize(bytes: Long): String {
             if (bytes <= 0L) return "0 B"
             if (bytes < 1024L) return "$bytes B"
