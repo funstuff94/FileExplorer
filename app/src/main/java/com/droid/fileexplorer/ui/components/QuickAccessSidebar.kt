@@ -1,8 +1,10 @@
 package com.droid.fileexplorer.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
@@ -53,9 +56,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.toAndroidDragEvent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -63,6 +70,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.droid.fileexplorer.data.SharedDragDropManager
 import com.droid.fileexplorer.model.DriveItem
 import com.droid.fileexplorer.model.DriveType
 import com.droid.fileexplorer.model.FileItem
@@ -80,6 +88,7 @@ fun QuickAccessSidebar(
     cloudDrives: List<DriveItem>,
     currentPath: String,
     currentTreeUri: String?,
+    canPaste: Boolean = false,
     onNavigate: (String, String?) -> Unit,
     onOpenInNewTab: (String, String?) -> Unit,
     onOpenInNewWindow: (String, String?) -> Unit,
@@ -90,6 +99,8 @@ fun QuickAccessSidebar(
     onAddCloudDrive: () -> Unit,
     onRemoveCloudDrive: (String) -> Unit,
     onRefreshDrives: () -> Unit = {},
+    onPasteIntoDirectory: (String, String?) -> Unit = { _, _ -> },
+    onMoveItemsToDirectory: (List<FileItem>, String, String, String?) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -144,11 +155,14 @@ fun QuickAccessSidebar(
                     icon = getQuickAccessIcon(item.title, item.type),
                     iconTint = if (item.type == QuickAccessType.CLOUD) Win11CloudBlue else Win11FolderYellow,
                     isSelected = isSelected,
+                    canPaste = canPaste,
                     canMoveUp = index > 0,
                     canMoveDown = index < quickAccessItems.lastIndex,
                     onClick = { onNavigate(item.path, item.treeUri) },
                     onOpenInNewTab = { onOpenInNewTab(item.path, item.treeUri) },
                     onOpenInNewWindow = { onOpenInNewWindow(item.path, item.treeUri) },
+                    onPasteInto = { onPasteIntoDirectory(item.path, item.treeUri) },
+                    onDropItems = { dropped -> onMoveItemsToDirectory(dropped, item.path, item.title, item.treeUri) },
                     onMoveUp = { onMoveUp(item.path) },
                     onMoveDown = { onMoveDown(item.path) },
                     onUnpin = { onUnpin(item.path) }
@@ -192,9 +206,12 @@ fun QuickAccessSidebar(
             DriveItemRow(
                 drive = drive,
                 isSelected = isSelected,
+                canPaste = canPaste,
                 onClick = { onNavigate(drive.path, drive.treeUri) },
                 onOpenInNewTab = { onOpenInNewTab(drive.path, drive.treeUri) },
-                onOpenInNewWindow = { onOpenInNewWindow(drive.path, drive.treeUri) }
+                onOpenInNewWindow = { onOpenInNewWindow(drive.path, drive.treeUri) },
+                onPasteInto = { onPasteIntoDirectory(drive.path, drive.treeUri) },
+                onDropItems = { dropped -> onMoveItemsToDirectory(dropped, drive.path, drive.name, drive.treeUri) }
             )
         }
 
@@ -256,9 +273,12 @@ fun QuickAccessSidebar(
                 DriveCloudRow(
                     drive = drive,
                     isSelected = isSelected,
+                    canPaste = canPaste,
                     onClick = { onNavigate(drive.name, drive.treeUri) },
                     onOpenInNewTab = { onOpenInNewTab(drive.name, drive.treeUri) },
                     onOpenInNewWindow = { onOpenInNewWindow(drive.name, drive.treeUri) },
+                    onPasteInto = { onPasteIntoDirectory(drive.name, drive.treeUri) },
+                    onDropItems = { dropped -> onMoveItemsToDirectory(dropped, drive.name, drive.name, drive.treeUri) },
                     onRemove = { drive.treeUri?.let { onRemoveCloudDrive(it) } }
                 )
             }
@@ -289,31 +309,69 @@ private fun SectionHeader(title: String, icon: ImageVector) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SidebarQuickAccessRow(
     item: QuickAccessItem,
     icon: ImageVector,
     iconTint: Color,
     isSelected: Boolean,
+    canPaste: Boolean,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onClick: () -> Unit,
     onOpenInNewTab: () -> Unit,
     onOpenInNewWindow: () -> Unit,
+    onPasteInto: () -> Unit,
+    onDropItems: (List<FileItem>) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onUnpin: () -> Unit
 ) {
     var showContextMenu by remember { mutableStateOf(false) }
+    var isDragOver by remember { mutableStateOf(false) }
+    val latestOnDropItems by rememberUpdatedState(onDropItems)
+
+    val dndTarget = remember {
+        object : DragAndDropTarget {
+            override fun onEntered(event: DragAndDropEvent) { isDragOver = true }
+            override fun onExited(event: DragAndDropEvent) { isDragOver = false }
+            override fun onEnded(event: DragAndDropEvent) { isDragOver = false }
+            override fun onDrop(event: DragAndDropEvent): Boolean {
+                isDragOver = false
+                val itemsToMove = SharedDragDropManager.activeDraggedItems.ifEmpty {
+                    SharedDragDropManager.extractItemsFromClipData(event.toAndroidDragEvent().clipData)
+                }
+                if (itemsToMove.isNotEmpty()) {
+                    latestOnDropItems(itemsToMove)
+                }
+                SharedDragDropManager.endDrag()
+                return true
+            }
+        }
+    }
 
     Box {
         Surface(
             shape = RoundedCornerShape(6.dp),
-            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+            color = when {
+                isDragOver -> Win11Blue.copy(alpha = 0.22f)
+                isSelected -> MaterialTheme.colorScheme.primaryContainer
+                else -> Color.Transparent
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 1.dp)
                 .clip(RoundedCornerShape(6.dp))
+                .border(
+                    width = if (isDragOver) 1.5.dp else 0.dp,
+                    color = if (isDragOver) Win11Blue else Color.Transparent,
+                    shape = RoundedCornerShape(6.dp)
+                )
+                .dragAndDropTarget(
+                    shouldStartDragAndDrop = { true },
+                    target = dndTarget
+                )
                 .contextClickable(
                     onClick = onClick,
                     onContextMenu = { showContextMenu = true }
@@ -413,6 +471,16 @@ private fun SidebarQuickAccessRow(
                     onOpenInNewWindow()
                 }
             )
+            if (canPaste) {
+                DropdownMenuItem(
+                    text = { Text("Paste into '${item.title}'") },
+                    leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    onClick = {
+                        showContextMenu = false
+                        onPasteInto()
+                    }
+                )
+            }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
@@ -449,25 +517,63 @@ private fun SidebarQuickAccessRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DriveCloudRow(
     drive: DriveItem,
     isSelected: Boolean,
+    canPaste: Boolean,
     onClick: () -> Unit,
     onOpenInNewTab: () -> Unit,
     onOpenInNewWindow: () -> Unit,
+    onPasteInto: () -> Unit,
+    onDropItems: (List<FileItem>) -> Unit,
     onRemove: () -> Unit
 ) {
     var showContextMenu by remember { mutableStateOf(false) }
+    var isDragOver by remember { mutableStateOf(false) }
+    val latestOnDropItems by rememberUpdatedState(onDropItems)
+
+    val dndTarget = remember {
+        object : DragAndDropTarget {
+            override fun onEntered(event: DragAndDropEvent) { isDragOver = true }
+            override fun onExited(event: DragAndDropEvent) { isDragOver = false }
+            override fun onEnded(event: DragAndDropEvent) { isDragOver = false }
+            override fun onDrop(event: DragAndDropEvent): Boolean {
+                isDragOver = false
+                val itemsToMove = SharedDragDropManager.activeDraggedItems.ifEmpty {
+                    SharedDragDropManager.extractItemsFromClipData(event.toAndroidDragEvent().clipData)
+                }
+                if (itemsToMove.isNotEmpty()) {
+                    latestOnDropItems(itemsToMove)
+                }
+                SharedDragDropManager.endDrag()
+                return true
+            }
+        }
+    }
 
     Box {
         Surface(
             shape = RoundedCornerShape(6.dp),
-            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+            color = when {
+                isDragOver -> Win11Blue.copy(alpha = 0.22f)
+                isSelected -> MaterialTheme.colorScheme.primaryContainer
+                else -> Color.Transparent
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 1.dp)
                 .clip(RoundedCornerShape(6.dp))
+                .border(
+                    width = if (isDragOver) 1.5.dp else 0.dp,
+                    color = if (isDragOver) Win11Blue else Color.Transparent,
+                    shape = RoundedCornerShape(6.dp)
+                )
+                .dragAndDropTarget(
+                    shouldStartDragAndDrop = { true },
+                    target = dndTarget
+                )
                 .contextClickable(
                     onClick = onClick,
                     onContextMenu = { showContextMenu = true }
@@ -536,6 +642,16 @@ private fun DriveCloudRow(
                     onOpenInNewWindow()
                 }
             )
+            if (canPaste) {
+                DropdownMenuItem(
+                    text = { Text("Paste into '${drive.name}'") },
+                    leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    onClick = {
+                        showContextMenu = false
+                        onPasteInto()
+                    }
+                )
+            }
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             DropdownMenuItem(
                 text = { Text("Disconnect Cloud Drive") },
@@ -549,15 +665,40 @@ private fun DriveCloudRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DriveItemRow(
     drive: DriveItem,
     isSelected: Boolean,
+    canPaste: Boolean,
     onClick: () -> Unit,
     onOpenInNewTab: () -> Unit,
-    onOpenInNewWindow: () -> Unit
+    onOpenInNewWindow: () -> Unit,
+    onPasteInto: () -> Unit,
+    onDropItems: (List<FileItem>) -> Unit
 ) {
     var showContextMenu by remember { mutableStateOf(false) }
+    var isDragOver by remember { mutableStateOf(false) }
+    val latestOnDropItems by rememberUpdatedState(onDropItems)
+
+    val dndTarget = remember {
+        object : DragAndDropTarget {
+            override fun onEntered(event: DragAndDropEvent) { isDragOver = true }
+            override fun onExited(event: DragAndDropEvent) { isDragOver = false }
+            override fun onEnded(event: DragAndDropEvent) { isDragOver = false }
+            override fun onDrop(event: DragAndDropEvent): Boolean {
+                isDragOver = false
+                val itemsToMove = SharedDragDropManager.activeDraggedItems.ifEmpty {
+                    SharedDragDropManager.extractItemsFromClipData(event.toAndroidDragEvent().clipData)
+                }
+                if (itemsToMove.isNotEmpty()) {
+                    latestOnDropItems(itemsToMove)
+                }
+                SharedDragDropManager.endDrag()
+                return true
+            }
+        }
+    }
 
     val icon = when (drive.type) {
         DriveType.LINUX_SHARED -> Icons.Default.Terminal
@@ -580,11 +721,24 @@ private fun DriveItemRow(
     Box {
         Surface(
             shape = RoundedCornerShape(6.dp),
-            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+            color = when {
+                isDragOver -> Win11Blue.copy(alpha = 0.22f)
+                isSelected -> MaterialTheme.colorScheme.primaryContainer
+                else -> Color.Transparent
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 2.dp)
                 .clip(RoundedCornerShape(6.dp))
+                .border(
+                    width = if (isDragOver) 1.5.dp else 0.dp,
+                    color = if (isDragOver) Win11Blue else Color.Transparent,
+                    shape = RoundedCornerShape(6.dp)
+                )
+                .dragAndDropTarget(
+                    shouldStartDragAndDrop = { true },
+                    target = dndTarget
+                )
                 .contextClickable(
                     onClick = onClick,
                     onContextMenu = { showContextMenu = true }
@@ -663,6 +817,16 @@ private fun DriveItemRow(
                     onOpenInNewWindow()
                 }
             )
+            if (canPaste) {
+                DropdownMenuItem(
+                    text = { Text("Paste into '${drive.name}'") },
+                    leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    onClick = {
+                        showContextMenu = false
+                        onPasteInto()
+                    }
+                )
+            }
         }
     }
 }

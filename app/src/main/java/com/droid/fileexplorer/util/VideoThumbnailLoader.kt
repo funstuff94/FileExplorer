@@ -12,6 +12,8 @@ import android.util.LruCache
 import android.util.Size
 import com.droid.fileexplorer.model.FileItem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -23,6 +25,7 @@ object VideoThumbnailLoader {
 
     private val maxMemory = (Runtime.getRuntime().maxMemory() / 1024).toInt()
     private val cacheSize = (maxMemory / 8).coerceIn(1024 * 16, 1024 * 64) // 16MB to 64MB cache
+    private val decodeSemaphore = Semaphore(2)
 
     private val memoryCache = object : LruCache<String, Bitmap>(cacheSize) {
         override fun sizeOf(key: String, bitmap: Bitmap): Int {
@@ -31,7 +34,7 @@ object VideoThumbnailLoader {
     }
 
     fun getCached(path: String): Bitmap? {
-        return memoryCache.get(path)
+        return try { memoryCache.get(path) } catch (_: Throwable) { null }
     }
 
     suspend fun loadThumbnail(context: Context, item: FileItem): Bitmap? = withContext(Dispatchers.IO) {
@@ -41,92 +44,100 @@ object VideoThumbnailLoader {
             item.path
         }
 
-        val cached = memoryCache.get(path)
+        val cached = getCached(path)
         if (cached != null) return@withContext cached
 
-        var bitmap: Bitmap? = null
+        decodeSemaphore.withPermit {
+            val recheck = getCached(path)
+            if (recheck != null) return@withPermit recheck
 
-        // 1. Direct file on local storage
-        if (!path.startsWith("content://")) {
-            val file = File(path)
-            if (file.exists() && file.canRead()) {
+            var bitmap: Bitmap? = null
+
+            // 1. Direct file on local storage
+            if (!path.startsWith("content://")) {
+                val file = File(path)
+                if (file.exists() && file.canRead()) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        try {
+                            bitmap = ThumbnailUtils.createVideoThumbnail(file, Size(256, 256), null)
+                        } catch (_: Throwable) {}
+                    }
+                    if (bitmap == null) {
+                        try {
+                            @Suppress("DEPRECATION")
+                            bitmap = ThumbnailUtils.createVideoThumbnail(path, MediaStore.Images.Thumbnails.MINI_KIND)
+                        } catch (_: Throwable) {}
+                    }
+                }
+            }
+
+            // 2. Direct Content URI (SAF / MTP)
+            if (bitmap == null && path.startsWith("content://")) {
+                val uri = Uri.parse(path)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     try {
-                        bitmap = ThumbnailUtils.createVideoThumbnail(file, Size(256, 256), null)
-                    } catch (_: Throwable) {}
-                }
-                if (bitmap == null) {
-                    try {
-                        @Suppress("DEPRECATION")
-                        bitmap = ThumbnailUtils.createVideoThumbnail(path, MediaStore.Images.Thumbnails.MINI_KIND)
+                        bitmap = context.contentResolver.loadThumbnail(uri, Size(256, 256), null)
                     } catch (_: Throwable) {}
                 }
             }
-        }
 
-        // 2. Direct Content URI (SAF / MTP)
-        if (bitmap == null && path.startsWith("content://")) {
-            val uri = Uri.parse(path)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // 3. MediaMetadataRetriever (universal fallback for MP4, MKV, AVI, MOV, WEBM, etc.)
+            if (bitmap == null) {
+                var retriever: MediaMetadataRetriever? = null
                 try {
-                    bitmap = context.contentResolver.loadThumbnail(uri, Size(256, 256), null)
-                } catch (_: Throwable) {}
-            }
-        }
-
-        // 3. MediaMetadataRetriever (universal fallback for MP4, MKV, AVI, MOV, WEBM, etc.)
-        if (bitmap == null) {
-            try {
-                val retriever = MediaMetadataRetriever()
-                var setSuccess = false
-                if (path.startsWith("content://")) {
-                    retriever.setDataSource(context, Uri.parse(path))
-                    setSuccess = true
-                } else {
-                    val file = File(path)
-                    if (file.exists() && file.canRead()) {
-                        retriever.setDataSource(path)
+                    retriever = MediaMetadataRetriever()
+                    var setSuccess = false
+                    if (path.startsWith("content://")) {
+                        retriever.setDataSource(context, Uri.parse(path))
                         setSuccess = true
                     } else {
-                        val treeUriStr = item.shortcutTargetTreeUri ?: item.treeUri
-                        if (treeUriStr != null) {
-                            val uuid = FileUriResolver.extractVolumeUuid(path)
-                            if (uuid != null) {
-                                val docId = FileUriResolver.buildDocumentId(uuid, path)
-                                val treeUriObj = Uri.parse(treeUriStr)
-                                val treeId = DocumentsContract.getTreeDocumentId(treeUriObj)
-                                val rootTreeUri = DocumentsContract.buildTreeDocumentUri(treeUriObj.authority, treeId)
-                                val docUri = DocumentsContract.buildDocumentUriUsingTree(rootTreeUri, docId)
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                    try {
-                                        bitmap = context.contentResolver.loadThumbnail(docUri, Size(256, 256), null)
-                                    } catch (_: Throwable) {}
-                                }
-                                if (bitmap == null) {
-                                    retriever.setDataSource(context, docUri)
-                                    setSuccess = true
+                        val file = File(path)
+                        if (file.exists() && file.canRead()) {
+                            retriever.setDataSource(path)
+                            setSuccess = true
+                        } else {
+                            val treeUriStr = item.shortcutTargetTreeUri ?: item.treeUri
+                            if (treeUriStr != null) {
+                                val uuid = FileUriResolver.extractVolumeUuid(path)
+                                if (uuid != null) {
+                                    val docId = FileUriResolver.buildDocumentId(uuid, path)
+                                    val treeUriObj = Uri.parse(treeUriStr)
+                                    val treeId = DocumentsContract.getTreeDocumentId(treeUriObj)
+                                    val rootTreeUri = DocumentsContract.buildTreeDocumentUri(treeUriObj.authority, treeId)
+                                    val docUri = DocumentsContract.buildDocumentUriUsingTree(rootTreeUri, docId)
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                        try {
+                                            bitmap = context.contentResolver.loadThumbnail(docUri, Size(256, 256), null)
+                                        } catch (_: Throwable) {}
+                                    }
+                                    if (bitmap == null) {
+                                        retriever.setDataSource(context, docUri)
+                                        setSuccess = true
+                                    }
                                 }
                             }
                         }
                     }
+
+                    if (bitmap == null && setSuccess) {
+                        bitmap = retriever.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            ?: retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            ?: retriever.frameAtTime
+                    }
+                } catch (_: Throwable) {
+                } finally {
+                    try { retriever?.release() } catch (_: Throwable) {}
                 }
+            }
 
-                if (bitmap == null && setSuccess) {
-                    bitmap = retriever.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                        ?: retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                        ?: retriever.frameAtTime
-                }
-                try { retriever.release() } catch (_: Throwable) {}
-            } catch (_: Throwable) {}
+            if (bitmap != null) {
+                val scaled = scaleDown(bitmap!!, 256)
+                try { memoryCache.put(path, scaled) } catch (_: Throwable) {}
+                return@withPermit scaled
+            }
+
+            null
         }
-
-        if (bitmap != null) {
-            val scaled = scaleDown(bitmap, 256)
-            memoryCache.put(path, scaled)
-            return@withContext scaled
-        }
-
-        null
     }
 
     private fun scaleDown(bitmap: Bitmap, maxDim: Int): Bitmap {

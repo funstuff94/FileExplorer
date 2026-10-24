@@ -105,6 +105,8 @@ class FakeFileRepository : FileRepository {
         return true
     }
 
+    var lastDestTreeUri: String? = "UNSET"
+
     override suspend fun copyItem(
         sourcePath: String,
         destDirPath: String,
@@ -113,6 +115,7 @@ class FakeFileRepository : FileRepository {
         onProgress: ((Long, Long, String) -> Unit)?,
         isCancelled: (() -> Boolean)?
     ): Boolean {
+        lastDestTreeUri = destTreeUri
         val name = sourcePath.substringAfterLast('/')
         val destList = filesMap.getOrPut(destDirPath) { mutableListOf() }
         destList.add(FileItem(name, name, "$destDirPath/$name", isDirectory = false))
@@ -128,6 +131,7 @@ class FakeFileRepository : FileRepository {
         onProgress: ((Long, Long, String) -> Unit)?,
         isCancelled: (() -> Boolean)?
     ): Boolean {
+        lastDestTreeUri = destTreeUri
         copyItem(sourcePath, destDirPath, sourceTreeUri, destTreeUri, onProgress, isCancelled)
         delete(sourcePath, sourceTreeUri)
         return true
@@ -1061,5 +1065,68 @@ class FileExplorerViewModelTest {
         val newVm = FileExplorerViewModel(repository)
         assertEquals(true, newVm.uiState.value.isDarkMode)
     }
+
+    @Test
+    fun testPaste_preventsCopyingOrMovingFolderIntoItself() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val docFolder = viewModel.uiState.value.items.first { it.name == "Documents" }
+        viewModel.copyItems(listOf(docFolder))
+        advanceUntilIdle()
+
+        // Attempt to paste Documents folder into itself
+        viewModel.paste("/storage/emulated/10/Documents")
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.statusText.contains("into itself"))
+        val docItems = repository.listFiles("/storage/emulated/10/Documents")
+        assertFalse(docItems.any { it.name == "Documents" })
+    }
+
+    @Test
+    fun testPaste_cutInSameFolder_doesNotDeleteSourceFile() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val notes = viewModel.uiState.value.items.first { it.name == "notes.txt" }
+        viewModel.cutItems(listOf(notes))
+        advanceUntilIdle()
+
+        // Attempt to paste cut item into its own parent folder
+        viewModel.paste("/storage/emulated/10")
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.statusText.contains("already in this folder"))
+        val rootItems = repository.listFiles("/storage/emulated/10")
+        assertTrue(rootItems.any { it.name == "notes.txt" })
+    }
+
+    @Test
+    fun testPasteFromExternalDriveToInternalDirectory_doesNotLeakExternalTreeUri() = runTest(testDispatcher) {
+        val usbPath = "/storage/C874-FBC6"
+        val usbTreeUri = "content://com.android.externalstorage.documents/tree/C874-FBC6%3A"
+        val usbDrive = DriveItem("usb1", "USB Drive (D:)", usbPath, 32_000_000_000L, 16_000_000_000L, DriveType.USB, treeUri = usbTreeUri)
+        repository.drives.add(usbDrive)
+        val usbFile = FileItem("usb_doc", "external_report.pdf", "$usbPath/external_report.pdf", isDirectory = false, size = 4096L, extension = "pdf", treeUri = usbTreeUri)
+        repository.filesMap[usbPath] = mutableListOf(usbFile)
+        repository.saveVolumeTreeUri(usbPath, usbTreeUri)
+
+        advanceUntilIdle()
+        // Navigate to USB drive so currentTreeUri is usbTreeUri
+        viewModel.navigateTo(usbPath, usbTreeUri)
+        advanceUntilIdle()
+        assertEquals(usbTreeUri, viewModel.uiState.value.currentTreeUri)
+
+        // Copy file from USB drive
+        viewModel.copyItems(listOf(usbFile))
+        advanceUntilIdle()
+
+        // Paste directly into internal storage Documents while still viewing USB drive (e.g. via Quick Access sidebar)
+        viewModel.paste("/storage/emulated/10/Documents", null)
+        advanceUntilIdle()
+
+        // Destination treeUri passed to repository must be null for internal storage!
+        assertEquals(null, repository.lastDestTreeUri)
+        val internalDocs = repository.listFiles("/storage/emulated/10/Documents")
+        assertTrue(internalDocs.any { it.name == "external_report.pdf" })
+    }
 }
+
 

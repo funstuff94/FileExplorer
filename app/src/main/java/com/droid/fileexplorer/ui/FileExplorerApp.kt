@@ -429,6 +429,7 @@ fun FileExplorerApp(
                 cloudDrives = uiState.cloudDrives,
                 currentPath = uiState.currentPath,
                 currentTreeUri = uiState.currentTreeUri,
+                canPaste = uiState.canPaste,
                 onNavigate = { path, treeUri ->
                     isEditingAddress = false
                     viewModel.navigateTo(path, treeUri)
@@ -444,7 +445,11 @@ fun FileExplorerApp(
                 onUnpin = { path -> viewModel.unpinDirectory(path) },
                 onAddCloudDrive = { openDocumentTreeLauncher.launch(null) },
                 onRemoveCloudDrive = { uri -> viewModel.removeCloudDrive(uri) },
-                onRefreshDrives = { viewModel.refreshDrives() }
+                onRefreshDrives = { viewModel.refreshDrives() },
+                onPasteIntoDirectory = { path, treeUri -> viewModel.paste(path, treeUri) },
+                onMoveItemsToDirectory = { items, destPath, destName, destTreeUri ->
+                    viewModel.moveItemsToDirectory(items, destPath, destName, destTreeUri)
+                }
             )
 
             // Right-Hand Main Explorer Area
@@ -593,7 +598,11 @@ fun FileExplorerApp(
                                 },
                                 onCut = { item -> viewModel.cutItems(getTargetItems(item)) },
                                 onCopy = { item -> viewModel.copyItems(getTargetItems(item)) },
-                                onPasteInto = { item -> viewModel.paste(item.path, item.treeUri) },
+                                onPasteInto = { item ->
+                                    val targetPath = if (item.isShortcut) item.shortcutTargetPath ?: item.path else item.path
+                                    val targetUri = if (item.isShortcut) item.shortcutTargetTreeUri ?: item.treeUri else item.treeUri
+                                    viewModel.paste(targetPath, targetUri)
+                                },
                                 onBackgroundPaste = { viewModel.paste() },
                                 onPin = { item -> viewModel.togglePin(item.path, item.name, item.treeUri) },
                                 onCreateShortcut = { item -> viewModel.createShortcut(item) },
@@ -656,7 +665,11 @@ fun FileExplorerApp(
                                 },
                                 onCut = { item -> viewModel.cutItems(getTargetItems(item)) },
                                 onCopy = { item -> viewModel.copyItems(getTargetItems(item)) },
-                                onPasteInto = { item -> viewModel.paste(item.path, item.treeUri) },
+                                onPasteInto = { item ->
+                                    val targetPath = if (item.isShortcut) item.shortcutTargetPath ?: item.path else item.path
+                                    val targetUri = if (item.isShortcut) item.shortcutTargetTreeUri ?: item.treeUri else item.treeUri
+                                    viewModel.paste(targetPath, targetUri)
+                                },
                                 onBackgroundPaste = { viewModel.paste() },
                                 onPin = { item -> viewModel.togglePin(item.path, item.name, item.treeUri) },
                                 onCreateShortcut = { item -> viewModel.createShortcut(item) },

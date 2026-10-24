@@ -155,6 +155,9 @@ fun MainContentGrid(
     val currentOnSelectionChange by rememberUpdatedState(onSelectionChange)
     val currentOnMoveItemsToFolder by rememberUpdatedState(onMoveItemsToFolder)
     val currentOnMoveItemsToDirectory by rememberUpdatedState(onMoveItemsToDirectory)
+    val latestCurrentPath by rememberUpdatedState(currentPath)
+    val latestCurrentFolderName by rememberUpdatedState(currentFolderName)
+    val latestCurrentTreeUri by rememberUpdatedState(currentTreeUri)
     val view = LocalView.current
 
     // Marquee selection & File Drag-and-Drop state
@@ -170,7 +173,7 @@ fun MainContentGrid(
     var dragHoveredFolder by remember { mutableStateOf<FileItem?>(null) }
     val isDraggingActive by SharedDragDropManager.isDragging.collectAsState()
 
-    androidx.compose.runtime.LaunchedEffect(items.firstOrNull()?.path?.substringBeforeLast('/')) {
+    androidx.compose.runtime.LaunchedEffect(currentPath, currentTreeUri, items.size) {
         itemBounds.clear()
         iconBounds.clear()
     }
@@ -186,15 +189,20 @@ fun MainContentGrid(
             override fun onMoved(event: DragAndDropEvent) {
                 val androidEvent = event.toAndroidDragEvent()
                 val posInRoot = Offset(androidEvent.x, androidEvent.y)
-                val localPos = containerCoordinates?.let { coords ->
-                    if (coords.isAttached) coords.windowToLocal(posInRoot) else posInRoot
-                } ?: posInRoot
+                val localPos = try {
+                    containerCoordinates?.let { coords ->
+                        if (coords.isAttached) coords.windowToLocal(posInRoot) else posInRoot
+                    } ?: posInRoot
+                } catch (_: Throwable) {
+                    posInRoot
+                }
 
                 val activeItems = SharedDragDropManager.activeDraggedItems
                 val draggedPaths = activeItems.map { it.path }.toSet()
 
                 dragHoveredFolder = currentItems.firstOrNull { candidate ->
-                    candidate.isDirectory &&
+                    val isFolderCandidate = candidate.isDirectory || (candidate.isShortcut && candidate.shortcutTargetIsDirectory)
+                    isFolderCandidate &&
                         !draggedPaths.contains(candidate.path) &&
                         !activeItems.any { dragged ->
                             dragged.isDirectory && candidate.path.startsWith(dragged.path.trimEnd('/') + "/")
@@ -218,7 +226,12 @@ fun MainContentGrid(
                     if (targetFolder != null) {
                         currentOnMoveItemsToFolder(itemsToMove, targetFolder)
                     } else {
-                        currentOnMoveItemsToDirectory(itemsToMove, currentPath, currentFolderName, currentTreeUri)
+                        currentOnMoveItemsToDirectory(
+                            itemsToMove,
+                            latestCurrentPath,
+                            latestCurrentFolderName,
+                            latestCurrentTreeUri
+                        )
                     }
                 }
 
@@ -279,11 +292,24 @@ fun MainContentGrid(
                         }
 
                         if (toDrag != null && toDrag.isNotEmpty()) {
-                            SharedDragDropManager.startDrag(toDrag, currentPath, currentTreeUri)
-                            val clipData = SharedDragDropManager.createClipData(view.context, toDrag, currentTreeUri)
+                            SharedDragDropManager.startDrag(toDrag, latestCurrentPath, latestCurrentTreeUri)
                             val shadow = FileDragShadowBuilder(view.context, toDrag)
-                            val flags = View.DRAG_FLAG_GLOBAL or View.DRAG_FLAG_GLOBAL_URI_READ
-                            view.startDragAndDrop(clipData, shadow, toDrag, flags)
+                            try {
+                                val clipData = SharedDragDropManager.createClipData(view.context, toDrag, latestCurrentTreeUri)
+                                val flags = View.DRAG_FLAG_GLOBAL or View.DRAG_FLAG_GLOBAL_URI_READ
+                                val started = view.startDragAndDrop(clipData, shadow, toDrag, flags)
+                                if (!started) {
+                                    val plainClip = SharedDragDropManager.createClipData(toDrag)
+                                    view.startDragAndDrop(plainClip, shadow, toDrag, View.DRAG_FLAG_GLOBAL)
+                                }
+                            } catch (_: Throwable) {
+                                try {
+                                    val plainClip = SharedDragDropManager.createClipData(toDrag)
+                                    view.startDragAndDrop(plainClip, shadow, toDrag, View.DRAG_FLAG_GLOBAL)
+                                } catch (_: Throwable) {
+                                    SharedDragDropManager.endDrag()
+                                }
+                            }
                             isDraggingSelection = false
                         } else {
                             isDraggingSelection = false
@@ -403,18 +429,22 @@ fun MainContentGrid(
                         canPaste = canPaste,
                         viewMode = viewMode,
                         onPositioned = { coords ->
-                            containerCoordinates?.let { parent ->
-                                if (parent.isAttached && coords.isAttached) {
-                                    itemBounds[item.path] = parent.localBoundingBoxOf(coords)
+                            try {
+                                containerCoordinates?.let { parent ->
+                                    if (parent.isAttached && coords.isAttached) {
+                                        itemBounds[item.path] = parent.localBoundingBoxOf(coords)
+                                    }
                                 }
-                            }
+                            } catch (_: Throwable) {}
                         },
                         onIconPositioned = { coords ->
-                            containerCoordinates?.let { parent ->
-                                if (parent.isAttached && coords.isAttached) {
-                                    iconBounds[item.path] = parent.localBoundingBoxOf(coords)
+                            try {
+                                containerCoordinates?.let { parent ->
+                                    if (parent.isAttached && coords.isAttached) {
+                                        iconBounds[item.path] = parent.localBoundingBoxOf(coords)
+                                    }
                                 }
-                            }
+                            } catch (_: Throwable) {}
                         },
                         onClick = { isCtrl, isShift -> onItemClick(item, isCtrl, isShift) },
                         onDoubleClick = { onItemDoubleClick(item) },

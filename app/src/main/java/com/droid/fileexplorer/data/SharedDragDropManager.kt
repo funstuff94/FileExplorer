@@ -61,41 +61,52 @@ object SharedDragDropManager {
             return ClipData.newPlainText(CLIP_DATA_LABEL, "")
         }
 
-        val pathsText = items.joinToString("\n") { it.path }
-        val effectiveTree = treeUri ?: sourceTreeUri
-        val firstItem = items.first()
-        val firstUri = FileUriResolver.resolveFileUri(context, firstItem, effectiveTree)
-        val firstMime = FileUriResolver.getMimeType(context, firstItem, firstUri)
+        return try {
+            val effectiveTree = treeUri ?: sourceTreeUri
+            val firstItem = items.first()
+            val firstUri = if (!firstItem.isDirectory) {
+                FileUriResolver.resolveFileUri(context, firstItem, effectiveTree)
+            } else null
+            val firstMime = if (!firstItem.isDirectory) {
+                FileUriResolver.getMimeType(context, firstItem, firstUri)
+            } else ""
 
-        val mimeTypes = mutableListOf<String>()
-        if (firstMime.isNotEmpty()) {
-            mimeTypes.add(firstMime)
-        }
-        mimeTypes.add(MIME_TYPE_FILE_ITEMS)
-        mimeTypes.add(ClipDescription.MIMETYPE_TEXT_PLAIN)
-        mimeTypes.add(ClipDescription.MIMETYPE_TEXT_URILIST)
-
-        val clipDesc = ClipDescription(CLIP_DATA_LABEL, mimeTypes.toTypedArray())
-        val firstClipItem = if (firstUri != null) {
-            ClipData.Item(pathsText, null as Intent?, firstUri)
-        } else {
-            ClipData.Item(pathsText)
-        }
-
-        val clipData = ClipData(clipDesc, firstClipItem)
-
-        for (i in 1 until items.size) {
-            val item = items[i]
-            val uri = FileUriResolver.resolveFileUri(context, item, effectiveTree)
-            val clipItem = if (uri != null) {
-                ClipData.Item(item.path, null as Intent?, uri)
-            } else {
-                ClipData.Item(item.path)
+            val mimeTypes = mutableListOf<String>()
+            if (firstMime.isNotEmpty()) {
+                mimeTypes.add(firstMime)
             }
-            clipData.addItem(clipItem)
-        }
+            mimeTypes.add(MIME_TYPE_FILE_ITEMS)
+            mimeTypes.add(ClipDescription.MIMETYPE_TEXT_PLAIN)
+            if (firstUri != null) {
+                mimeTypes.add(ClipDescription.MIMETYPE_TEXT_URILIST)
+            }
 
-        return clipData
+            val clipDesc = ClipDescription(CLIP_DATA_LABEL, mimeTypes.toTypedArray())
+            val firstClipItem = if (firstUri != null) {
+                ClipData.Item(firstItem.path, null as Intent?, firstUri)
+            } else {
+                ClipData.Item(firstItem.path)
+            }
+
+            val clipData = ClipData(clipDesc, firstClipItem)
+
+            for (i in 1 until items.size) {
+                val item = items[i]
+                val uri = if (!item.isDirectory) {
+                    FileUriResolver.resolveFileUri(context, item, effectiveTree)
+                } else null
+                val clipItem = if (uri != null) {
+                    ClipData.Item(item.path, null as Intent?, uri)
+                } else {
+                    ClipData.Item(item.path)
+                }
+                clipData.addItem(clipItem)
+            }
+
+            clipData
+        } catch (_: Throwable) {
+            createClipData(items)
+        }
     }
 
     fun createClipData(items: List<FileItem>): ClipData {
@@ -114,15 +125,25 @@ object SharedDragDropManager {
         }
         if (clipData == null || clipData.itemCount == 0) return emptyList()
 
+        val seenPaths = mutableSetOf<String>()
         val result = mutableListOf<FileItem>()
+        val fallbackTree = sourceTreeUri
         for (i in 0 until clipData.itemCount) {
             val item = clipData.getItemAt(i)
-            val text = item.text?.toString() ?: continue
-            val paths = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
-            for (p in paths) {
+            val text = item.text?.toString()
+            val itemUriStr = item.uri?.toString()
+            val candidates = if (!text.isNullOrBlank()) {
+                text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            } else if (!itemUriStr.isNullOrBlank()) {
+                listOf(itemUriStr)
+            } else {
+                emptyList()
+            }
+            for (p in candidates) {
+                if (!seenPaths.add(p)) continue
                 val file = File(p)
                 val isDir = file.isDirectory
-                val name = file.name.ifEmpty { p }
+                val name = file.name.ifEmpty { p.substringAfterLast('/') }
                 val ext = if (isDir) "" else name.substringAfterLast('.', "")
                 result.add(
                     FileItem(
@@ -130,8 +151,9 @@ object SharedDragDropManager {
                         name = name,
                         path = p,
                         isDirectory = isDir,
-                        size = if (isDir) 0L else file.length(),
-                        extension = ext
+                        size = if (isDir) 0L else try { file.length() } catch (_: Exception) { 0L },
+                        extension = ext,
+                        treeUri = fallbackTree ?: itemUriStr?.takeIf { it.startsWith("content://") }
                     )
                 )
             }

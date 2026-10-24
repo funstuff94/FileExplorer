@@ -201,29 +201,36 @@ object FileUriResolver {
                     try {
                         val parsedTree = Uri.parse(effectiveTreeUri)
                         val docId = buildDocumentId(uuid, cleanPath)
-                        val docUri = DocumentsContract.buildDocumentUriUsingTree(parsedTree, docId)
+                        val treeId = DocumentsContract.getTreeDocumentId(parsedTree)
+                        val rootTreeUri = DocumentsContract.buildTreeDocumentUri(parsedTree.authority, treeId)
+                        val docUri = DocumentsContract.buildDocumentUriUsingTree(rootTreeUri, docId)
                         if (docUri != null) {
                             return docUri
                         }
-                    } catch (_: Exception) {}
+                    } catch (_: Exception) {
+                        try {
+                            val parsedTree = Uri.parse(effectiveTreeUri)
+                            val docId = buildDocumentId(uuid, cleanPath)
+                            val docUri = DocumentsContract.buildDocumentUriUsingTree(parsedTree, docId)
+                            if (docUri != null) return docUri
+                        } catch (_: Exception) {}
+                    }
                 }
             }
         }
 
-        // Case 4: FileProvider for internal storage or fallback
+        // Case 4: FileProvider for internal storage or fallback (only for readable files, never file:// URI which throws FileUriExposedException)
+        if (isDirectory) return null
         val file = File(cleanPath)
-        try {
-            return FileProvider.getUriForFile(
+        if (!file.exists()) return null
+        return try {
+            FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
                 file
             )
         } catch (_: Exception) {
-            return try {
-                Uri.fromFile(file)
-            } catch (_: Exception) {
-                null
-            }
+            null
         }
     }
 

@@ -753,156 +753,218 @@ class FileExplorerViewModel(
         _uiState.update { it.copy(transferProgress = null, statusText = "Transfer cancelled") }
     }
 
+    private suspend fun resolveEffectiveDestTreeUri(dest: String, explicitTargetTreeUri: String?): String? {
+        val cleanDest = dest.trimEnd('/')
+        if (cleanDest.isEmpty() ||
+            cleanDest.startsWith("/storage/emulated") ||
+            cleanDest.startsWith("/mnt/shared") ||
+            cleanDest.startsWith("/storage/self") ||
+            cleanDest == "/storage"
+        ) {
+            return null
+        }
+        if (explicitTargetTreeUri != null) return explicitTargetTreeUri
+        if (cleanDest.startsWith("content://")) {
+            return _uiState.value.currentTreeUri ?: cleanDest
+        }
+        if (isExternalStoragePath(cleanDest)) {
+            val persisted = repository.getPersistedTreeUriForPath(cleanDest)
+            if (persisted != null) return persisted
+            val currentTree = _uiState.value.currentTreeUri
+            val currentClean = _uiState.value.currentPath.trimEnd('/')
+            if (currentTree != null && (cleanDest == currentClean || cleanDest.startsWith("$currentClean/") || currentClean.startsWith("$cleanDest/"))) {
+                return currentTree
+            }
+            return null
+        }
+        if (!cleanDest.startsWith("/")) {
+            return _uiState.value.currentTreeUri
+        }
+        return null
+    }
+
     fun paste(targetDirPath: String? = null, targetTreeUri: String? = null) {
         val clipboard = SharedClipboardManager.getClipboard() ?: _uiState.value.clipboardState ?: return
-        val dest = targetDirPath ?: _uiState.value.currentPath
+        val dest = (targetDirPath ?: _uiState.value.currentPath).trimEnd('/')
+        if (dest.isEmpty()) return
 
         transferJob?.cancel()
         isTransferCancelled = false
 
         transferJob = viewModelScope.launch {
-            val items = clipboard.items
-            if (items.isEmpty()) return@launch
+            try {
+                val allItems = clipboard.items
+                if (allItems.isEmpty()) return@launch
 
-            val isExternal = isExternalStoragePath(dest)
-            val effectiveDestUri = targetTreeUri ?: _uiState.value.currentTreeUri
-                ?: if (isExternal) repository.getPersistedTreeUriForPath(dest) else null
-
-            val isDirectlyWritable = if (isExternal && effectiveDestUri == null) {
-                try { File(dest).canWrite() } catch (_: Exception) { false }
-            } else true
-
-            if (isExternal && effectiveDestUri == null && !isDirectlyWritable) {
-                val targetUuid = dest.trimEnd('/').substringAfterLast('/')
-                val matchingDrive = _uiState.value.drives.firstOrNull {
-                    it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
-                    (it.path == dest || dest.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
-                }
-                val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
-                val driveRoot = matchingDrive?.path ?: dest
-                _uiState.update {
-                    it.copy(
-                        statusText = "Write permission required for $driveName. Please grant volume access.",
-                        needsVolumeAccess = true,
-                        volumeAccessName = driveName,
-                        volumeAccessPath = driveRoot
-                    )
-                }
-                return@launch
-            }
-
-            val sourceDirs = items.mapNotNull { item ->
-                if (item.treeUri != null) item.treeUri else File(item.path).parent
-            }.distinct()
-
-            var totalBytes = 0L
-            val itemSizes = mutableListOf<Long>()
-            for (item in items) {
-                val s = if (item.size > 0L && !item.isDirectory) item.size else repository.calculateItemSize(item.path, item.treeUri)
-                itemSizes.add(s)
-                totalBytes += s
-            }
-
-            val opName = if (clipboard.operation == ClipboardOperation.CUT) "Moving" else "Copying"
-            val totalItems = items.size
-            var overallBytesCopied = 0L
-            val startTime = System.currentTimeMillis()
-            var lastUiUpdate = 0L
-
-            _uiState.update { state ->
-                state.copy(
-                    transferProgress = TransferProgress(
-                        operation = opName,
-                        currentFileName = items.first().name,
-                        currentItemIndex = 1,
-                        totalItems = totalItems,
-                        bytesTransferred = 0L,
-                        totalBytes = totalBytes,
-                        sourcePath = items.first().path,
-                        destPath = dest
-                    )
-                )
-            }
-
-            var successCount = 0
-            for (i in items.indices) {
-                if (isTransferCancelled) break
-                val item = items[i]
-                val baseBytesBeforeThisItem = overallBytesCopied
-
-                val progressCallback: (Long, Long, String) -> Unit = { fileBytesCopied, _, currentFileName ->
-                    val now = System.currentTimeMillis()
-                    val currentTotalCopied = baseBytesBeforeThisItem + fileBytesCopied
-                    val elapsedSec = (now - startTime) / 1000.0
-                    val speed = if (elapsedSec > 0.1) currentTotalCopied / elapsedSec else 0.0
-                    val remainingBytes = (totalBytes - currentTotalCopied).coerceAtLeast(0L)
-                    val remainingSec = if (speed > 1024.0) (remainingBytes / speed).toLong() else 0L
-
-                    if (now - lastUiUpdate > 120 || currentTotalCopied >= totalBytes) {
-                        lastUiUpdate = now
-                        _uiState.update { state ->
-                            state.copy(
-                                transferProgress = TransferProgress(
-                                    operation = opName,
-                                    currentFileName = currentFileName,
-                                    currentItemIndex = i + 1,
-                                    totalItems = totalItems,
-                                    bytesTransferred = currentTotalCopied,
-                                    totalBytes = totalBytes,
-                                    speedBytesPerSec = speed,
-                                    estimatedRemainingSeconds = remainingSec,
-                                    sourcePath = item.path,
-                                    destPath = dest
-                                )
-                            )
-                        }
+                val isCut = clipboard.operation == ClipboardOperation.CUT
+                val items = allItems.filter { item ->
+                    val srcClean = item.path.trimEnd('/')
+                    if (item.isDirectory && (dest == srcClean || dest.startsWith("$srcClean/"))) {
+                        false
+                    } else if (isCut && File(srcClean).parent?.trimEnd('/') == dest) {
+                        false
+                    } else {
+                        true
                     }
                 }
 
-                val ok = if (clipboard.operation == ClipboardOperation.CUT) {
-                    repository.moveItem(item.path, dest, item.treeUri, effectiveDestUri, progressCallback, { isTransferCancelled })
-                } else {
-                    repository.copyItem(item.path, dest, item.treeUri, effectiveDestUri, progressCallback, { isTransferCancelled })
+                if (items.isEmpty()) {
+                    val statusMsg = if (allItems.any { it.isDirectory && (dest == it.path.trimEnd('/') || dest.startsWith(it.path.trimEnd('/') + "/")) }) {
+                        "Cannot copy or move a folder into itself"
+                    } else {
+                        "Item(s) are already in this folder"
+                    }
+                    _uiState.update { it.copy(statusText = statusMsg) }
+                    return@launch
                 }
 
-                if (ok) {
-                    successCount++
+                val isExternal = isExternalStoragePath(dest)
+                val effectiveDestUri = resolveEffectiveDestTreeUri(dest, targetTreeUri)
+
+                val isDirectlyWritable = if (isExternal && effectiveDestUri == null) {
+                    try { File(dest).canWrite() } catch (_: Exception) { false }
+                } else true
+
+                if (isExternal && effectiveDestUri == null && !isDirectlyWritable) {
+                    val targetUuid = dest.trimEnd('/').substringAfterLast('/')
+                    val matchingDrive = _uiState.value.drives.firstOrNull {
+                        it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
+                        (it.path == dest || dest.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                    }
+                    val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
+                    val driveRoot = matchingDrive?.path ?: dest
+                    _uiState.update {
+                        it.copy(
+                            statusText = "Write permission required for $driveName. Please grant volume access.",
+                            needsVolumeAccess = true,
+                            volumeAccessName = driveName,
+                            volumeAccessPath = driveRoot
+                        )
+                    }
+                    return@launch
                 }
-                overallBytesCopied = baseBytesBeforeThisItem + itemSizes[i]
+
+                val sourceDirs = items.mapNotNull { item ->
+                    if (item.treeUri != null) item.treeUri else File(item.path).parent
+                }.distinct()
+
+                var totalBytes = 0L
+                val itemSizes = mutableListOf<Long>()
+                for (item in items) {
+                    val s = if (item.size > 0L && !item.isDirectory) item.size else repository.calculateItemSize(item.path, item.treeUri)
+                    itemSizes.add(s)
+                    totalBytes += s
+                }
+
+                val opName = if (isCut) "Moving" else "Copying"
+                val totalItems = items.size
+                var overallBytesCopied = 0L
+                val startTime = System.currentTimeMillis()
+                var lastUiUpdate = 0L
+
+                _uiState.update { state ->
+                    state.copy(
+                        transferProgress = TransferProgress(
+                            operation = opName,
+                            currentFileName = items.first().name,
+                            currentItemIndex = 1,
+                            totalItems = totalItems,
+                            bytesTransferred = 0L,
+                            totalBytes = totalBytes,
+                            sourcePath = items.first().path,
+                            destPath = dest
+                        )
+                    )
+                }
+
+                var successCount = 0
+                for (i in items.indices) {
+                    if (isTransferCancelled) break
+                    val item = items[i]
+                    val baseBytesBeforeThisItem = overallBytesCopied
+
+                    val progressCallback: (Long, Long, String) -> Unit = { fileBytesCopied, _, currentFileName ->
+                        val now = System.currentTimeMillis()
+                        val currentTotalCopied = baseBytesBeforeThisItem + fileBytesCopied
+                        val elapsedSec = (now - startTime) / 1000.0
+                        val speed = if (elapsedSec > 0.1) currentTotalCopied / elapsedSec else 0.0
+                        val remainingBytes = (totalBytes - currentTotalCopied).coerceAtLeast(0L)
+                        val remainingSec = if (speed > 1024.0) (remainingBytes / speed).toLong() else 0L
+
+                        if (now - lastUiUpdate > 120 || currentTotalCopied >= totalBytes) {
+                            lastUiUpdate = now
+                            _uiState.update { state ->
+                                state.copy(
+                                    transferProgress = TransferProgress(
+                                        operation = opName,
+                                        currentFileName = currentFileName,
+                                        currentItemIndex = i + 1,
+                                        totalItems = totalItems,
+                                        bytesTransferred = currentTotalCopied,
+                                        totalBytes = totalBytes,
+                                        speedBytesPerSec = speed,
+                                        estimatedRemainingSeconds = remainingSec,
+                                        sourcePath = item.path,
+                                        destPath = dest
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    val ok = if (isCut) {
+                        repository.moveItem(item.path, dest, item.treeUri, effectiveDestUri, progressCallback, { isTransferCancelled })
+                    } else {
+                        repository.copyItem(item.path, dest, item.treeUri, effectiveDestUri, progressCallback, { isTransferCancelled })
+                    }
+
+                    if (ok) {
+                        successCount++
+                    }
+                    overallBytesCopied = baseBytesBeforeThisItem + itemSizes[i]
+                }
+
+                val finalOverall = overallBytesCopied
+                val allSucceeded = successCount == totalItems && !isTransferCancelled
+
+                if (isCut && allSucceeded) {
+                    SharedClipboardManager.clearClipboard()
+                }
+
+                _uiState.update { state ->
+                    val updatedClipboard = if (isCut && allSucceeded) {
+                        null
+                    } else {
+                        SharedClipboardManager.getClipboard() ?: state.clipboardState
+                    }
+                    val status = when {
+                        isTransferCancelled -> "Transfer cancelled ($successCount of $totalItems completed)"
+                        successCount == 0 -> "Failed to ${if (isCut) "move" else "copy"} item(s)"
+                        else -> "Successfully ${if (isCut) "moved" else "copied"} $successCount of $totalItems item(s) (${FileItem.formatByteSize(finalOverall)})"
+                    }
+                    state.copy(
+                        transferProgress = null,
+                        clipboardState = updatedClipboard,
+                        statusText = status
+                    )
+                }
+
+                // Broadcast directory change events to notify ALL open windows/tabs to refresh
+                sourceDirs.forEach { SharedClipboardManager.notifyDirectoryChanged(it) }
+                SharedClipboardManager.notifyDirectoryChanged(dest)
+                if (effectiveDestUri != null) SharedClipboardManager.notifyDirectoryChanged(effectiveDestUri)
+
+                refresh()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                _uiState.update {
+                    it.copy(
+                        transferProgress = null,
+                        statusText = "Transfer failed: ${t.localizedMessage ?: "Unexpected error"}"
+                    )
+                }
             }
-
-            val finalOverall = overallBytesCopied
-            val isCut = clipboard.operation == ClipboardOperation.CUT
-            val allSucceeded = successCount == totalItems && !isTransferCancelled
-
-            if (isCut && allSucceeded) {
-                SharedClipboardManager.clearClipboard()
-            }
-
-            _uiState.update { state ->
-                val updatedClipboard = if (isCut && allSucceeded) {
-                    null
-                } else {
-                    SharedClipboardManager.getClipboard() ?: state.clipboardState
-                }
-                val status = if (isTransferCancelled) {
-                    "Transfer cancelled ($successCount of $totalItems completed)"
-                } else {
-                    "Successfully ${if (isCut) "moved" else "copied"} $successCount of $totalItems item(s) (${FileItem.formatByteSize(finalOverall)})"
-                }
-                state.copy(
-                    transferProgress = null,
-                    clipboardState = updatedClipboard,
-                    statusText = status
-                )
-            }
-
-            // Broadcast directory change events to notify ALL open windows/tabs to refresh
-            sourceDirs.forEach { SharedClipboardManager.notifyDirectoryChanged(it) }
-            SharedClipboardManager.notifyDirectoryChanged(dest)
-            if (effectiveDestUri != null) SharedClipboardManager.notifyDirectoryChanged(effectiveDestUri)
-
-            refresh()
         }
     }
 
@@ -913,13 +975,14 @@ class FileExplorerViewModel(
         targetTreeUri: String? = null
     ) {
         val dest = targetDirPath.trimEnd('/')
-        if (dest.isEmpty()) return
+        if (dest.isEmpty() && targetTreeUri.isNullOrEmpty()) return
 
         // Filter out target folder itself, its descendants, or items already directly inside targetDirPath
         val validItems = items.filter { item ->
-            if (item.path == dest) return@filter false
-            if (item.isDirectory && dest.startsWith(item.path.trimEnd('/') + "/")) return@filter false
-            val parentPath = File(item.path).parent
+            val srcClean = item.path.trimEnd('/')
+            if (srcClean == dest) return@filter false
+            if (item.isDirectory && dest.isNotEmpty() && dest.startsWith("$srcClean/")) return@filter false
+            val parentPath = File(srcClean).parent
             if (parentPath != null && parentPath.trimEnd('/') == dest) return@filter false
             true
         }
@@ -929,144 +992,172 @@ class FileExplorerViewModel(
         isTransferCancelled = false
 
         transferJob = viewModelScope.launch {
-            val isExternal = isExternalStoragePath(dest)
-            val destUri = targetTreeUri ?: if (isExternal) repository.getPersistedTreeUriForPath(dest) else null
+            try {
+                val effectiveDest = dest.ifEmpty { targetTreeUri ?: "" }
+                val isExternal = isExternalStoragePath(effectiveDest)
+                val destUri = resolveEffectiveDestTreeUri(effectiveDest, targetTreeUri)
 
-            val isDirectlyWritable = if (isExternal && destUri == null) {
-                try { File(dest).canWrite() } catch (_: Exception) { false }
-            } else true
+                val isDirectlyWritable = if (isExternal && destUri == null) {
+                    try { File(effectiveDest).canWrite() } catch (_: Exception) { false }
+                } else true
 
-            if (isExternal && destUri == null && !isDirectlyWritable) {
-                val targetUuid = dest.trimEnd('/').substringAfterLast('/')
-                val matchingDrive = _uiState.value.drives.firstOrNull {
-                    it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
-                    (it.path == dest || dest.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                if (isExternal && destUri == null && !isDirectlyWritable) {
+                    val targetUuid = effectiveDest.trimEnd('/').substringAfterLast('/')
+                    val matchingDrive = _uiState.value.drives.firstOrNull {
+                        it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
+                        (it.path == effectiveDest || effectiveDest.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                    }
+                    val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
+                    val driveRoot = matchingDrive?.path ?: effectiveDest
+                    _uiState.update {
+                        it.copy(
+                            statusText = "Write permission required for $driveName. Please grant volume access.",
+                            needsVolumeAccess = true,
+                            volumeAccessName = driveName,
+                            volumeAccessPath = driveRoot
+                        )
+                    }
+                    return@launch
                 }
-                val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
-                val driveRoot = matchingDrive?.path ?: dest
-                _uiState.update {
-                    it.copy(
-                        statusText = "Write permission required for $driveName. Please grant volume access.",
-                        needsVolumeAccess = true,
-                        volumeAccessName = driveName,
-                        volumeAccessPath = driveRoot
+                val sourceDirs = validItems.mapNotNull { item ->
+                    if (item.treeUri != null) item.treeUri else File(item.path).parent
+                }.distinct()
+
+                var totalBytes = 0L
+                val itemSizes = mutableListOf<Long>()
+                for (item in validItems) {
+                    val s = if (item.size > 0L && !item.isDirectory) item.size else repository.calculateItemSize(item.path, item.treeUri)
+                    itemSizes.add(s)
+                    totalBytes += s
+                }
+
+                val opName = "Moving"
+                val totalItems = validItems.size
+                var overallBytesCopied = 0L
+                val startTime = System.currentTimeMillis()
+                var lastUiUpdate = 0L
+
+                _uiState.update { state ->
+                    state.copy(
+                        transferProgress = TransferProgress(
+                            operation = opName,
+                            currentFileName = validItems.first().name,
+                            currentItemIndex = 1,
+                            totalItems = totalItems,
+                            bytesTransferred = 0L,
+                            totalBytes = totalBytes,
+                            sourcePath = validItems.first().path,
+                            destPath = effectiveDest
+                        )
                     )
                 }
-                return@launch
-            }
-            val sourceDirs = validItems.mapNotNull { item ->
-                if (item.treeUri != null) item.treeUri else File(item.path).parent
-            }.distinct()
 
-            var totalBytes = 0L
-            val itemSizes = mutableListOf<Long>()
-            for (item in validItems) {
-                val s = if (item.size > 0L && !item.isDirectory) item.size else repository.calculateItemSize(item.path, item.treeUri)
-                itemSizes.add(s)
-                totalBytes += s
-            }
+                var successCount = 0
+                for (i in validItems.indices) {
+                    if (isTransferCancelled) break
+                    val item = validItems[i]
+                    val baseBytesBeforeThisItem = overallBytesCopied
 
-            val opName = "Moving"
-            val totalItems = validItems.size
-            var overallBytesCopied = 0L
-            val startTime = System.currentTimeMillis()
-            var lastUiUpdate = 0L
+                    val progressCallback: (Long, Long, String) -> Unit = { fileBytesCopied, _, currentFileName ->
+                        val now = System.currentTimeMillis()
+                        val currentTotalCopied = baseBytesBeforeThisItem + fileBytesCopied
+                        val elapsedSec = (now - startTime) / 1000.0
+                        val speed = if (elapsedSec > 0.1) currentTotalCopied / elapsedSec else 0.0
+                        val remainingBytes = (totalBytes - currentTotalCopied).coerceAtLeast(0L)
+                        val remainingSec = if (speed > 1024.0) (remainingBytes / speed).toLong() else 0L
 
-            _uiState.update { state ->
-                state.copy(
-                    transferProgress = TransferProgress(
-                        operation = opName,
-                        currentFileName = validItems.first().name,
-                        currentItemIndex = 1,
-                        totalItems = totalItems,
-                        bytesTransferred = 0L,
-                        totalBytes = totalBytes,
-                        sourcePath = validItems.first().path,
-                        destPath = dest
-                    )
-                )
-            }
-
-            var successCount = 0
-            for (i in validItems.indices) {
-                if (isTransferCancelled) break
-                val item = validItems[i]
-                val baseBytesBeforeThisItem = overallBytesCopied
-
-                val progressCallback: (Long, Long, String) -> Unit = { fileBytesCopied, _, currentFileName ->
-                    val now = System.currentTimeMillis()
-                    val currentTotalCopied = baseBytesBeforeThisItem + fileBytesCopied
-                    val elapsedSec = (now - startTime) / 1000.0
-                    val speed = if (elapsedSec > 0.1) currentTotalCopied / elapsedSec else 0.0
-                    val remainingBytes = (totalBytes - currentTotalCopied).coerceAtLeast(0L)
-                    val remainingSec = if (speed > 1024.0) (remainingBytes / speed).toLong() else 0L
-
-                    if (now - lastUiUpdate > 120 || currentTotalCopied >= totalBytes) {
-                        lastUiUpdate = now
-                        _uiState.update { state ->
-                            state.copy(
-                                transferProgress = TransferProgress(
-                                    operation = opName,
-                                    currentFileName = currentFileName,
-                                    currentItemIndex = i + 1,
-                                    totalItems = totalItems,
-                                    bytesTransferred = currentTotalCopied,
-                                    totalBytes = totalBytes,
-                                    speedBytesPerSec = speed,
-                                    estimatedRemainingSeconds = remainingSec,
-                                    sourcePath = item.path,
-                                    destPath = dest
+                        if (now - lastUiUpdate > 120 || currentTotalCopied >= totalBytes) {
+                            lastUiUpdate = now
+                            _uiState.update { state ->
+                                state.copy(
+                                    transferProgress = TransferProgress(
+                                        operation = opName,
+                                        currentFileName = currentFileName,
+                                        currentItemIndex = i + 1,
+                                        totalItems = totalItems,
+                                        bytesTransferred = currentTotalCopied,
+                                        totalBytes = totalBytes,
+                                        speedBytesPerSec = speed,
+                                        estimatedRemainingSeconds = remainingSec,
+                                        sourcePath = item.path,
+                                        destPath = effectiveDest
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
+
+                    val ok = repository.moveItem(item.path, effectiveDest, item.treeUri, destUri, progressCallback, { isTransferCancelled })
+                    if (ok) {
+                        successCount++
+                    }
+                    overallBytesCopied = baseBytesBeforeThisItem + itemSizes[i]
                 }
 
-                val ok = repository.moveItem(item.path, dest, item.treeUri, destUri, progressCallback, { isTransferCancelled })
-                if (ok) {
-                    successCount++
+                val finalOverall = overallBytesCopied
+                _uiState.update { state ->
+                    val status = when {
+                        isTransferCancelled -> "Move cancelled"
+                        successCount == 0 -> "Failed to move item(s) to '$targetDirName'"
+                        else -> "Successfully moved $successCount of $totalItems item(s) to '$targetDirName' (${FileItem.formatByteSize(finalOverall)})"
+                    }
+                    state.copy(
+                        transferProgress = null,
+                        selectedItemPaths = emptySet(),
+                        statusText = status
+                    )
                 }
-                overallBytesCopied = baseBytesBeforeThisItem + itemSizes[i]
+
+                sourceDirs.forEach { SharedClipboardManager.notifyDirectoryChanged(it) }
+                SharedClipboardManager.notifyDirectoryChanged(effectiveDest)
+                if (destUri != null) SharedClipboardManager.notifyDirectoryChanged(destUri)
+
+                refresh()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                _uiState.update {
+                    it.copy(
+                        transferProgress = null,
+                        statusText = "Move failed: ${t.localizedMessage ?: "Unexpected error"}"
+                    )
+                }
             }
-
-            val finalOverall = overallBytesCopied
-            _uiState.update { state ->
-                val status = if (isTransferCancelled) {
-                    "Move cancelled"
-                } else {
-                    "Successfully moved $successCount of $totalItems item(s) to '$targetDirName' (${FileItem.formatByteSize(finalOverall)})"
-                }
-                state.copy(
-                    transferProgress = null,
-                    selectedItemPaths = emptySet(),
-                    statusText = status
-                )
-            }
-
-            sourceDirs.forEach { SharedClipboardManager.notifyDirectoryChanged(it) }
-            SharedClipboardManager.notifyDirectoryChanged(dest)
-            if (destUri != null) SharedClipboardManager.notifyDirectoryChanged(destUri)
-
-            refresh()
         }
     }
 
     fun moveItemsToFolder(items: List<FileItem>, targetFolder: FileItem) {
-        if (!targetFolder.isDirectory) return
-        moveItemsToDirectory(items, targetFolder.path, targetFolder.name, targetFolder.treeUri)
+        if (!targetFolder.isDirectory && !(targetFolder.isShortcut && targetFolder.shortcutTargetIsDirectory)) return
+        val destPath = if (targetFolder.isShortcut && !targetFolder.shortcutTargetPath.isNullOrEmpty()) {
+            targetFolder.shortcutTargetPath
+        } else {
+            targetFolder.path
+        }
+        val destTree = if (targetFolder.isShortcut && !targetFolder.shortcutTargetTreeUri.isNullOrEmpty()) {
+            targetFolder.shortcutTargetTreeUri
+        } else {
+            targetFolder.treeUri ?: _uiState.value.currentTreeUri
+        }
+        moveItemsToDirectory(items, destPath, targetFolder.name, destTree)
     }
 
     fun createShortcut(targetItem: FileItem, destDirPath: String? = null, destTreeUri: String? = null) {
         val dest = destDirPath ?: _uiState.value.currentPath
-        val destUri = destTreeUri ?: _uiState.value.currentTreeUri
         viewModelScope.launch {
-            val ok = repository.createShortcut(targetItem, dest, destUri)
-            if (ok) {
-                SharedClipboardManager.notifyDirectoryChanged(dest)
-                if (destUri != null) SharedClipboardManager.notifyDirectoryChanged(destUri)
-                refresh()
-                _uiState.update { it.copy(statusText = "Shortcut created for '${targetItem.name}'") }
-            } else {
+            try {
+                val destUri = resolveEffectiveDestTreeUri(dest, destTreeUri)
+                val ok = repository.createShortcut(targetItem, dest, destUri)
+                if (ok) {
+                    SharedClipboardManager.notifyDirectoryChanged(dest)
+                    if (destUri != null) SharedClipboardManager.notifyDirectoryChanged(destUri)
+                    refresh()
+                    _uiState.update { it.copy(statusText = "Shortcut created for '${targetItem.name}'") }
+                } else {
+                    _uiState.update { it.copy(statusText = "Failed to create shortcut") }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Throwable) {
                 _uiState.update { it.copy(statusText = "Failed to create shortcut") }
             }
         }
@@ -1075,17 +1166,21 @@ class FileExplorerViewModel(
     // --- Quick Access Reordering ---
     fun moveQuickAccessUp(path: String) {
         viewModelScope.launch {
-            repository.reorderQuickAccessItem(path, moveUp = true)
-            val updated = repository.getQuickAccessItems()
-            _uiState.update { it.copy(quickAccessItems = updated) }
+            try {
+                repository.reorderQuickAccessItem(path, moveUp = true)
+                val updated = repository.getQuickAccessItems()
+                _uiState.update { it.copy(quickAccessItems = updated) }
+            } catch (_: Throwable) {}
         }
     }
 
     fun moveQuickAccessDown(path: String) {
         viewModelScope.launch {
-            repository.reorderQuickAccessItem(path, moveUp = false)
-            val updated = repository.getQuickAccessItems()
-            _uiState.update { it.copy(quickAccessItems = updated) }
+            try {
+                repository.reorderQuickAccessItem(path, moveUp = false)
+                val updated = repository.getQuickAccessItems()
+                _uiState.update { it.copy(quickAccessItems = updated) }
+            } catch (_: Throwable) {}
         }
     }
 
@@ -1097,38 +1192,42 @@ class FileExplorerViewModel(
 
     fun pinDirectory(path: String, name: String, treeUri: String? = null) {
         viewModelScope.launch {
-            val displayName = name.ifEmpty { File(path).name.ifEmpty { path } }
-            repository.pinDirectory(path, displayName, treeUri)
-            val updated = repository.getQuickAccessItems()
-            val pinnedPaths = updated.map { it.path.trimEnd('/') }.toSet()
+            try {
+                val displayName = name.ifEmpty { File(path).name.ifEmpty { path } }
+                repository.pinDirectory(path, displayName, treeUri)
+                val updated = repository.getQuickAccessItems()
+                val pinnedPaths = updated.map { it.path.trimEnd('/') }.toSet()
 
-            _uiState.update { state ->
-                val updatedItems = state.items.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
-                val updatedFiltered = state.filteredItems.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
-                state.copy(
-                    quickAccessItems = updated,
-                    items = updatedItems,
-                    filteredItems = updatedFiltered
-                )
-            }
+                _uiState.update { state ->
+                    val updatedItems = state.items.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
+                    val updatedFiltered = state.filteredItems.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
+                    state.copy(
+                        quickAccessItems = updated,
+                        items = updatedItems,
+                        filteredItems = updatedFiltered
+                    )
+                }
+            } catch (_: Throwable) {}
         }
     }
 
     fun unpinDirectory(path: String) {
         viewModelScope.launch {
-            repository.unpinDirectory(path)
-            val updated = repository.getQuickAccessItems()
-            val pinnedPaths = updated.map { it.path.trimEnd('/') }.toSet()
+            try {
+                repository.unpinDirectory(path)
+                val updated = repository.getQuickAccessItems()
+                val pinnedPaths = updated.map { it.path.trimEnd('/') }.toSet()
 
-            _uiState.update { state ->
-                val updatedItems = state.items.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
-                val updatedFiltered = state.filteredItems.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
-                state.copy(
-                    quickAccessItems = updated,
-                    items = updatedItems,
-                    filteredItems = updatedFiltered
-                )
-            }
+                _uiState.update { state ->
+                    val updatedItems = state.items.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
+                    val updatedFiltered = state.filteredItems.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
+                    state.copy(
+                        quickAccessItems = updated,
+                        items = updatedItems,
+                        filteredItems = updatedFiltered
+                    )
+                }
+            } catch (_: Throwable) {}
         }
     }
 
@@ -1142,51 +1241,55 @@ class FileExplorerViewModel(
 
     fun pinSelectedDirectories() {
         viewModelScope.launch {
-            val state = _uiState.value
-            val selected = state.selectedDirectories
-            if (selected.isNotEmpty()) {
-                selected.forEach { dir ->
-                    repository.pinDirectory(dir.path, dir.name, dir.treeUri)
+            try {
+                val state = _uiState.value
+                val selected = state.selectedDirectories
+                if (selected.isNotEmpty()) {
+                    selected.forEach { dir ->
+                        repository.pinDirectory(dir.path, dir.name, dir.treeUri)
+                    }
+                } else if (state.currentPath.isNotEmpty()) {
+                    repository.pinDirectory(state.currentPath, state.currentFolderName, state.currentTreeUri)
                 }
-            } else if (state.currentPath.isNotEmpty()) {
-                repository.pinDirectory(state.currentPath, state.currentFolderName, state.currentTreeUri)
-            }
-            val updated = repository.getQuickAccessItems()
-            val pinnedPaths = updated.map { it.path.trimEnd('/') }.toSet()
-            _uiState.update { s ->
-                val updatedItems = s.items.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
-                val updatedFiltered = s.filteredItems.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
-                s.copy(
-                    quickAccessItems = updated,
-                    items = updatedItems,
-                    filteredItems = updatedFiltered
-                )
-            }
+                val updated = repository.getQuickAccessItems()
+                val pinnedPaths = updated.map { it.path.trimEnd('/') }.toSet()
+                _uiState.update { s ->
+                    val updatedItems = s.items.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
+                    val updatedFiltered = s.filteredItems.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
+                    s.copy(
+                        quickAccessItems = updated,
+                        items = updatedItems,
+                        filteredItems = updatedFiltered
+                    )
+                }
+            } catch (_: Throwable) {}
         }
     }
 
     fun unpinSelectedDirectories() {
         viewModelScope.launch {
-            val state = _uiState.value
-            val selected = state.selectedDirectories
-            if (selected.isNotEmpty()) {
-                selected.forEach { dir ->
-                    repository.unpinDirectory(dir.path)
+            try {
+                val state = _uiState.value
+                val selected = state.selectedDirectories
+                if (selected.isNotEmpty()) {
+                    selected.forEach { dir ->
+                        repository.unpinDirectory(dir.path)
+                    }
+                } else if (state.currentPath.isNotEmpty()) {
+                    repository.unpinDirectory(state.currentPath)
                 }
-            } else if (state.currentPath.isNotEmpty()) {
-                repository.unpinDirectory(state.currentPath)
-            }
-            val updated = repository.getQuickAccessItems()
-            val pinnedPaths = updated.map { it.path.trimEnd('/') }.toSet()
-            _uiState.update { s ->
-                val updatedItems = s.items.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
-                val updatedFiltered = s.filteredItems.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
-                s.copy(
-                    quickAccessItems = updated,
-                    items = updatedItems,
-                    filteredItems = updatedFiltered
-                )
-            }
+                val updated = repository.getQuickAccessItems()
+                val pinnedPaths = updated.map { it.path.trimEnd('/') }.toSet()
+                _uiState.update { s ->
+                    val updatedItems = s.items.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
+                    val updatedFiltered = s.filteredItems.map { it.copy(isPinned = pinnedPaths.contains(it.path.trimEnd('/'))) }
+                    s.copy(
+                        quickAccessItems = updated,
+                        items = updatedItems,
+                        filteredItems = updatedFiltered
+                    )
+                }
+            } catch (_: Throwable) {}
         }
     }
 
@@ -1215,38 +1318,43 @@ class FileExplorerViewModel(
         val isExternal = isExternalStoragePath(dir)
 
         viewModelScope.launch {
-            val treeUri = targetTreeUri ?: current.currentTreeUri
-                ?: if (isExternal) repository.getPersistedTreeUriForPath(dir) else null
+            try {
+                val treeUri = resolveEffectiveDestTreeUri(dir, targetTreeUri)
 
-            val isDirectlyWritable = if (isExternal && treeUri == null) {
-                try { File(dir).canWrite() } catch (_: Exception) { false }
-            } else true
+                val isDirectlyWritable = if (isExternal && treeUri == null) {
+                    try { File(dir).canWrite() } catch (_: Exception) { false }
+                } else true
 
-            if (isExternal && treeUri == null && !isDirectlyWritable) {
-                val targetUuid = dir.trimEnd('/').substringAfterLast('/')
-                val matchingDrive = current.drives.firstOrNull {
-                    it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
-                    (it.path == dir || dir.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                if (isExternal && treeUri == null && !isDirectlyWritable) {
+                    val targetUuid = dir.trimEnd('/').substringAfterLast('/')
+                    val matchingDrive = current.drives.firstOrNull {
+                        it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
+                        (it.path == dir || dir.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                    }
+                    val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
+                    val driveRoot = matchingDrive?.path ?: dir
+                    _uiState.update {
+                        it.copy(
+                            statusText = "Write permission required for $driveName. Please grant volume access.",
+                            needsVolumeAccess = true,
+                            volumeAccessName = driveName,
+                            volumeAccessPath = driveRoot
+                        )
+                    }
+                    return@launch
                 }
-                val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
-                val driveRoot = matchingDrive?.path ?: dir
-                _uiState.update {
-                    it.copy(
-                        statusText = "Write permission required for $driveName. Please grant volume access.",
-                        needsVolumeAccess = true,
-                        volumeAccessName = driveName,
-                        volumeAccessPath = driveRoot
-                    )
-                }
-                return@launch
-            }
 
-            val ok = repository.createDirectory(dir, name, treeUri)
-            if (ok) {
-                SharedClipboardManager.notifyDirectoryChanged(dir)
-                if (treeUri != null) SharedClipboardManager.notifyDirectoryChanged(treeUri)
-                refresh()
-            } else {
+                val ok = repository.createDirectory(dir, name, treeUri)
+                if (ok) {
+                    SharedClipboardManager.notifyDirectoryChanged(dir)
+                    if (treeUri != null) SharedClipboardManager.notifyDirectoryChanged(treeUri)
+                    refresh()
+                } else {
+                    _uiState.update { it.copy(statusText = "Failed to create folder '$name'") }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Throwable) {
                 _uiState.update { it.copy(statusText = "Failed to create folder '$name'") }
             }
         }
@@ -1258,38 +1366,43 @@ class FileExplorerViewModel(
         val isExternal = isExternalStoragePath(dir)
 
         viewModelScope.launch {
-            val treeUri = targetTreeUri ?: current.currentTreeUri
-                ?: if (isExternal) repository.getPersistedTreeUriForPath(dir) else null
+            try {
+                val treeUri = resolveEffectiveDestTreeUri(dir, targetTreeUri)
 
-            val isDirectlyWritable = if (isExternal && treeUri == null) {
-                try { File(dir).canWrite() } catch (_: Exception) { false }
-            } else true
+                val isDirectlyWritable = if (isExternal && treeUri == null) {
+                    try { File(dir).canWrite() } catch (_: Exception) { false }
+                } else true
 
-            if (isExternal && treeUri == null && !isDirectlyWritable) {
-                val targetUuid = dir.trimEnd('/').substringAfterLast('/')
-                val matchingDrive = current.drives.firstOrNull {
-                    it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
-                    (it.path == dir || dir.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                if (isExternal && treeUri == null && !isDirectlyWritable) {
+                    val targetUuid = dir.trimEnd('/').substringAfterLast('/')
+                    val matchingDrive = current.drives.firstOrNull {
+                        it.type != DriveType.INTERNAL && it.type != DriveType.LINUX_SHARED &&
+                        (it.path == dir || dir.startsWith(it.path) || it.path.contains(targetUuid) || it.id.contains(targetUuid))
+                    }
+                    val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
+                    val driveRoot = matchingDrive?.path ?: dir
+                    _uiState.update {
+                        it.copy(
+                            statusText = "Write permission required for $driveName. Please grant volume access.",
+                            needsVolumeAccess = true,
+                            volumeAccessName = driveName,
+                            volumeAccessPath = driveRoot
+                        )
+                    }
+                    return@launch
                 }
-                val driveName = matchingDrive?.name ?: "External Drive ($targetUuid)"
-                val driveRoot = matchingDrive?.path ?: dir
-                _uiState.update {
-                    it.copy(
-                        statusText = "Write permission required for $driveName. Please grant volume access.",
-                        needsVolumeAccess = true,
-                        volumeAccessName = driveName,
-                        volumeAccessPath = driveRoot
-                    )
-                }
-                return@launch
-            }
 
-            val ok = repository.createTextFile(dir, name, content, treeUri)
-            if (ok) {
-                SharedClipboardManager.notifyDirectoryChanged(dir)
-                if (treeUri != null) SharedClipboardManager.notifyDirectoryChanged(treeUri)
-                refresh()
-            } else {
+                val ok = repository.createTextFile(dir, name, content, treeUri)
+                if (ok) {
+                    SharedClipboardManager.notifyDirectoryChanged(dir)
+                    if (treeUri != null) SharedClipboardManager.notifyDirectoryChanged(treeUri)
+                    refresh()
+                } else {
+                    _uiState.update { it.copy(statusText = "Failed to create file '$name'") }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Throwable) {
                 _uiState.update { it.copy(statusText = "Failed to create file '$name'") }
             }
         }
@@ -1298,23 +1411,35 @@ class FileExplorerViewModel(
     fun renameItem(path: String, newName: String) {
         val current = _uiState.value
         viewModelScope.launch {
-            repository.rename(path, newName, current.currentTreeUri)
-            SharedClipboardManager.notifyDirectoryChanged(current.currentPath)
-            if (current.currentTreeUri != null) SharedClipboardManager.notifyDirectoryChanged(current.currentTreeUri)
-            refresh()
+            try {
+                repository.rename(path, newName, current.currentTreeUri)
+                SharedClipboardManager.notifyDirectoryChanged(current.currentPath)
+                if (current.currentTreeUri != null) SharedClipboardManager.notifyDirectoryChanged(current.currentTreeUri)
+                refresh()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                _uiState.update { it.copy(statusText = "Failed to rename item") }
+            }
         }
     }
 
     fun deleteSelected() {
         val current = _uiState.value
         viewModelScope.launch {
-            current.selectedItemPaths.forEach { path ->
-                repository.delete(path, current.currentTreeUri)
+            try {
+                current.selectedItemPaths.forEach { path ->
+                    repository.delete(path, current.currentTreeUri)
+                }
+                clearSelection()
+                SharedClipboardManager.notifyDirectoryChanged(current.currentPath)
+                if (current.currentTreeUri != null) SharedClipboardManager.notifyDirectoryChanged(current.currentTreeUri)
+                refresh()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                _uiState.update { it.copy(statusText = "Failed to delete item(s)") }
             }
-            clearSelection()
-            SharedClipboardManager.notifyDirectoryChanged(current.currentPath)
-            if (current.currentTreeUri != null) SharedClipboardManager.notifyDirectoryChanged(current.currentTreeUri)
-            refresh()
         }
     }
 
